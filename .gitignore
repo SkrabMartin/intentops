@@ -29,3 +29,7 @@ checkpoints/
 *.pth
 artifacts/*
 !artifacts/.gitkeep
+
+# Local implementation notes, not part of the public project
+PHASE_0_REPORT.md
+INTENTOPS_PROJECT_PLAN.md

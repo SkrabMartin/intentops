@@ -81,8 +81,7 @@ python -m ruff format --check .
 
 Tests use an in-process client and require no server, dataset, network, or GPU.
 The optional GitHub Actions workflow runs these checks on push/pull request;
-GitHub is not needed for local operation. See `PHASE_0_REPORT.md` for actual
-verification results on the implementation machine.
+GitHub is not needed for local operation.
 
 ## Layout
 
@@ -96,9 +95,6 @@ verification results on the implementation machine.
 | `artifacts/` | Tracked placeholder; generated binaries ignored |
 | `.streamlit/` | Headless, loopback, telemetry-disabled defaults |
 | `.github/workflows/` | Optional hosted test automation |
-
-The pre-existing `INTENTOPS_PROJECT_PLAN.md` is preserved as a long-term roadmap.
-Its phase numbering differs from this bounded Phase-0 foundation task.
 
 ## Licensing and deferred work
 

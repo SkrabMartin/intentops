@@ -26,3 +26,5 @@ artifacts
 **/*.pth
 build
 dist
+PHASE_0_REPORT.md
+INTENTOPS_PROJECT_PLAN.md
