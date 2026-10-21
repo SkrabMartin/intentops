@@ -20,10 +20,13 @@ def test_model_info() -> None:
     response = client.get("/model/info")
     assert response.status_code == 200
     assert response.json() == {
-        "phase": 0,
-        "status": "untrained",
+        "phase": 3,
+        "status": "unavailable",
         "model_ready": False,
         "model_version": None,
+        "classifier_type": None,
+        "category_count": 0,
+        "reason": "disabled",
     }
 
 
@@ -34,7 +37,7 @@ def test_prediction_unavailable(text: str) -> None:
     assert response.json() == {
         "error": {
             "code": "model_not_ready",
-            "message": "No trained model is available. Classification is deferred to a later phase.",
+            "message": "No verified model is loaded. Enable trusted local artifacts and restart the API.",
         }
     }
     assert text not in response.text
@@ -67,7 +70,7 @@ def test_request_normalizes_whitespace() -> None:
 @pytest.mark.parametrize(
     "schema, payload",
     [
-        (HealthResponse, {"model_ready": True}),
+        (HealthResponse, {"model_ready": "yes"}),
         (HealthResponse, {"extra": "value"}),
         (ModelInfoResponse, {"status": "trained"}),
         (ModelInfoResponse, {"model_version": "fake"}),

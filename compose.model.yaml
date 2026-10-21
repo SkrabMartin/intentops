@@ -1,0 +1,28 @@
+# Explicit opt-in: use this file only for your own trusted, compatible model.
+services:
+  api:
+    environment:
+      INTENTOPS_TRUST_LOCAL_ARTIFACTS: "1"
+      INTENTOPS_ARTIFACT_DIR: /opt/intentops/artifacts
+    volumes:
+      - models:/opt/intentops/artifacts:ro
+  train:
+    profiles: [setup]
+    image: intentops-api:local
+    command: ["python", "-m", "ml.train", "--raw-dir", "/input/raw", "--processed-dir", "/input/processed", "--artifact-dir", "/opt/intentops/artifacts"]
+    volumes:
+      - type: bind
+        source: ./data/raw/train.csv
+        target: /input/raw/train.csv
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/processed
+        target: /input/processed
+        read_only: true
+        bind:
+          create_host_path: false
+      - models:/opt/intentops/artifacts
+volumes:
+  models:

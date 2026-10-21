@@ -103,16 +103,21 @@ def train_models(data) -> tuple:
     )
 
 
-def publish_run(root: Path, data, model, baseline, fit_measurements: dict) -> tuple[dict, Path]:
-    """Stage an entire new run, rename it atomically, publish pointer last; keep old runs."""
-    metrics, inference_timing = evaluate_models(model, baseline, data)
+def configuration_for(model) -> dict:
+    """Record exact estimator defaults without fitting or accessing datasets."""
     parameters = {
         key: (np.dtype(value).name if key == "tfidf__dtype" else value)
         for key, value in model.get_params(deep=True).items()
         if key not in ("steps", "tfidf", "classifier")
     }
     # JSON normalizes tuples to lists; retain every actual estimator parameter.
-    configuration = json.loads(ds.json_bytes({**CONFIGURATION, "pipeline_parameters": parameters}))
+    return json.loads(ds.json_bytes({**CONFIGURATION, "pipeline_parameters": parameters}))
+
+
+def publish_run(root: Path, data, model, baseline, fit_measurements: dict) -> tuple[dict, Path]:
+    """Stage an entire new run, rename it atomically, publish pointer last; keep old runs."""
+    metrics, inference_timing = evaluate_models(model, baseline, data)
+    configuration = configuration_for(model)
     identity = {
         "configuration": configuration,
         "data_provenance": data.provenance,

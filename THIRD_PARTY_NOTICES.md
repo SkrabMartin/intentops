@@ -30,6 +30,11 @@ customer-message text or generated experiment bundle is published. Aggregate
 validation numbers in docs/model.md are attributed to BANKING77 and describe a
 repartitioning of official training data, not the reserved official test split.
 
+Phase 3 serves the operator's explicitly trusted local bundle in memory. Models
+are mounted at runtime rather than embedded or published. The approved data
+identity is pinned by hash for dataset-free serving; no dataset content is copied
+into the application. Serving does not change the separate data/metadata license.
+
 Upstream citation: Iñigo Casanueva, Tadas Temcinas, Daniela Gerz, Matthew Henderson,
 and Ivan Vulić (2020), [Efficient Intent Detection with Dual Sentence Encoders](https://arxiv.org/abs/2003.04807),
 Proceedings of the 2nd Workshop on NLP for ConvAI, ACL 2020.

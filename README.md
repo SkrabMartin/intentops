@@ -1,23 +1,21 @@
 # IntentOps
 
-**Phase 2 â€” local model training and validation available; web prediction remains disabled.**
+**Phase 3 — real local model serving, enabled only for explicitly trusted artifacts.**
 
-IntentOps is an open-source foundation for developers building local customer-support
-intent classification. BANKING77 acquisition, strict validation, deterministic
-data preparation, and local exploration are implemented. A tested FastAPI service
-and Streamlit status dashboard remain available. A CPU TF-IDF/logistic-regression
-model can now be trained locally; serving integration is deferred.
+IntentOps is an open-source, CPU-only customer-support intent classifier using
+BANKING77 and a TF-IDF/logistic-regression pipeline. It includes verified data
+preparation, local training/validation, FastAPI predictions and a Streamlit interface.
+No API keys, paid model services, GPU, hosted database or mandatory cloud hosting.
 
-No paid APIs, API keys, GPU, hosted database, or external hosting are required.
-Internet may be needed for the initial clone, Python installation, dependency
-installation, and Docker image downloads. Once installed, local services run
-without internet or external inference calls. Dependencies are installed during
-setup/build, never at application startup. Current dependency bounds permit patch
-and minor updates: this phase does not claim a fully locked reproducible build.
+Initial dependency/image/dataset setup may need internet. Once installed and a
+compatible model is available, inference runs locally without external calls.
+Models, learned vocabularies, datasets and internal reports stay outside Git and
+Docker build contexts. Training/downloads never happen on application startup.
+Dependencies are bounded, not fully locked; exact model environment checks apply.
 
 ## Native setup (Python 3.12)
 
-From this repository root, create a virtual environment:
+From the repository root (PowerShell):
 
 ```powershell
 py -3.12 -m venv .venv
@@ -25,53 +23,89 @@ py -3.12 -m venv .venv
 python -m pip install -e '.[dev]'
 ```
 
-If using uv to provision Python instead: `uv venv --python 3.12`, activate as
-above, then `uv pip install -e '.[dev]'`. Use one environment consistently.
-On Linux/macOS: `python3.12 -m venv .venv` then `source .venv/bin/activate`.
+Use the existing environment if already set up. With uv: `uv pip install -e '.[dev]'`.
+Linux/macOS can use `python3.12 -m venv .venv` and `source .venv/bin/activate`.
+A trusted compatible model must exist under artifacts/; if absent, explicitly
+prepare verified local data and run `python -m ml.train` as documented below.
+No data is required during serving; the approved Phase-1 input identity is pinned.
 
-Start each service in its own activated terminal, from the repository root:
+Start the API with deliberate trust acknowledgement, in an activated terminal:
 
-```sh
-python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
+```powershell
+$env:INTENTOPS_TRUST_LOCAL_ARTIFACTS = '1'
+$env:INTENTOPS_ARTIFACT_DIR = (Resolve-Path artifacts).Path
+python -m uvicorn app.api:app --host 127.0.0.1 --port 18000 --no-access-log
+```
+
+In another activated terminal:
+
+```powershell
+$env:INTENTOPS_API_URL = 'http://127.0.0.1:18000'
 python -m streamlit run dashboard/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 ```
 
-- API documentation: <http://127.0.0.1:8000/docs>
-- Health: <http://127.0.0.1:8000/health> (`status: ok`, `model_ready: false`)
-- Model status: <http://127.0.0.1:8000/model/info> (`phase: 0`, `status: untrained`)
-- Dashboard: <http://127.0.0.1:8501>
+- API docs: <http://127.0.0.1:18000/docs>
+- Liveness: <http://127.0.0.1:18000/health> (200 even without a model).
+- Readiness: <http://127.0.0.1:18000/ready> (200 only with a verified loaded model).
+- Metadata: <http://127.0.0.1:18000/model/info>.
+- Dashboard: <http://127.0.0.1:8501>.
 
-`POST /predict` accepts only `{"text": "fictional example"}`. Text is stripped,
-must contain 1â€“5000 characters, and must be a string. Extra fields are rejected.
-Valid requests always return HTTP 503 with `error.code: model_not_ready`.
-Invalid requests return HTTP 422 without echoing submitted values. The web services
-do not load local training artifacts, generate predictions, or store messages.
+For safe no-model mode, remove the trust variable or set it to `'0'` before
+starting/restarting the API. Missing/corrupt/incompatible/untrusted artifacts keep
+it alive but not ready; /predict returns 503 model_not_ready. Only the exact value
+`1` enables loading. Joblib/pickle can execute code: trust only your own artifacts.
+This opt-in and SHA-256 checks do not authenticate an artifact producer.
 
-The dashboard defaults to `http://127.0.0.1:8000`. To change it, set
-`INTENTOPS_API_URL` (PowerShell: `$env:INTENTOPS_API_URL = 'http://127.0.0.1:8000'`).
-Use only trusted local API addresses. It sends status requests only; textarea
-contents are never submitted to the API. Streamlit usage statistics are disabled.
-An explicit browser address also disables Streamlit's external-IP discovery banner.
+POST /predict accepts only `{"text": "fictional example"}` with a trimmed,
+nonblank string of at most 5,000 characters. It returns intent, model_version,
+three ranked intent/score pairs and score_type=uncalibrated_model_probability.
+No routing threshold, correctness guarantee or human-review decision is implied.
+Invalid requests return 422 without echoing submitted values. The UI enables
+Classify only when the API reports a ready model and valid input, and submits
+text only on click to its configured local API. Messages are ephemeral, not logged
+or stored. Usage telemetry and public-IP lookup remain disabled.
 
-## Docker Compose
+## Docker: explicit compatible-model setup and serving
 
-Install Docker Engine with Compose, or Docker Desktop with a running Linux engine.
-Docker Desktop has separate licensing terms; native Python is also supported.
-From the repository root:
+A Windows Python 3.12.13 model must not be force-loaded in Linux Python 3.12.15.
+Build the API image and run the existing training command in that same environment.
+Only original train.csv and prepared partitions/manifest are mounted read-only;
+raw/test.csv is not exposed. A project-scoped named volume preserves the generated
+Linux bundle. The serving API mounts that volume read-only as non-root uid 10001.
+The image seeds only an empty, owned artifact directory, never model contents.
 
-```sh
-docker compose config
-docker compose up --build -d
-docker compose ps
-docker compose logs --tail=100
+With local Phase-1 training inputs present, run in PowerShell:
+
+```powershell
+$env:INTENTOPS_API_PORT = '18000'
+docker compose build
+docker compose -f compose.yaml -f compose.model.yaml --profile setup run --rm --no-deps train
+docker compose -f compose.yaml -f compose.model.yaml up -d
+Invoke-RestMethod http://127.0.0.1:18000/ready
 ```
 
-Open the same localhost URLs listed above. Both ports bind to host loopback.
-Containers run as an unprivileged user. Inside Compose the dashboard uses
-`http://api:8000`; this service hostname is not the native host address.
-The API has a Python-based liveness health check; dashboard startup waits for it.
-Both services use the same Dockerfile. To stop verification services without
-deleting data: `docker compose stop`. No volumes are required.
+The optional compose.model.yaml is explicit trust opt-in for your own local bundle.
+Its training service runs only via the setup profile and explicit run command;
+ordinary up does not train. Both training and API use intentops-api:local. After
+rebuilding/changing the environment, explicitly regenerate a compatible bundle
+and restart; version checks are never suppressed. All source inputs stay local.
+
+```powershell
+docker compose -f compose.yaml -f compose.model.yaml ps
+docker compose -f compose.yaml -f compose.model.yaml logs --tail=100
+docker compose -f compose.yaml -f compose.model.yaml stop
+```
+
+Open the same localhost URLs listed above. Both published ports bind to loopback;
+inside Compose the dashboard uses http://api:8000. The API health check is liveness;
+use /ready for model readiness. No volumes are deleted by stop. Data and model
+volumes are not included in Git or images. Native Python remains an alternative
+to Docker Engine/Compose or separately licensed Docker Desktop.
+
+For default **no-model** startup: `docker compose up -d` (base file only). This
+mounts no model and sets no trust opt-in; health is 200, readiness/prediction 503.
+See [serving operations and troubleshooting](docs/serving.md) for the exact trust,
+integrity, offline and API contracts.
 
 ## Development and tests
 
@@ -197,14 +231,14 @@ All 77 labels have validation support; the main model predicts all 77, baseline 
 Top-3 counts the correct label among three candidates; it is not top-1 routing
 accuracy. These BANKING77-derived validation aggregates do not establish held-out
 or real-customer performance. Probabilities have not been calibrated; no confidence
-threshold or human-routing policy is implemented. **The API/UI still cannot predict.**
+threshold or human-routing policy is implemented. **API/UI inference requires an explicitly trusted, verified loaded model.**
 See [model methodology, configuration and limitations](docs/model.md).
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `app/` | API, strict schemas, explicit unavailable inference boundary |
+| `app/` | API, strict schemas, one-time trusted model loading and real inference |
 | `dashboard/` | Streamlit interface and local service status |
 | `ml/` | Verified data preparation, CPU training, validation and artifact integrity |
 | `tests/` | Self-contained API and inference contract tests |
@@ -221,10 +255,9 @@ Original code is licensed under MIT; see `LICENSE` (IntentOps Contributors).
 BANKING77 retains its separate CC BY 4.0 license and attribution obligations;
 see `THIRD_PARTY_NOTICES.md`. No dataset is included.
 
-Deferred: web prediction serving, calibration, confidence thresholds, held-out
-test evaluation, and evaluation dashboards. The API/dashboard keep their Phase-0
-untrained/unavailable contract until serving integration; a local trained artifact
-does not change deployed model readiness. Validation results are benchmark-specific.
+Deferred: calibration, confidence thresholds, selective prediction/human review,
+held-out test evaluation and evaluation dashboards. Validation results remain
+benchmark-specific; real serving does not establish production quality.
 
 ## Troubleshooting
 
@@ -237,7 +270,8 @@ does not change deployed model readiness. Validation results are benchmark-speci
   for example, `$env:INTENTOPS_API_PORT = '18000'` selects host port 18000.
 - Missing dependencies: activate `.venv` and repeat the development installation.
   Python 3.12 is required; Python 3.10 is not supported by this project.
-- `model_not_ready` / Model not trained in the dashboard: expected while serving
-  is deferred, even after local training succeeds. No artifact is auto-loaded.
+- `model_not_ready`: check explicit trust, artifact permissions, complete bundle
+  and exact Python/package versions. See the sanitized reason in /model/info.
+  Never force-load an incompatible bundle; regenerate in the serving environment.
 - API unavailable in the dashboard: check `/health`, its configured local URL,
   and API logs, then refresh. The dashboard remains usable without the API.

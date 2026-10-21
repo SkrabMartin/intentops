@@ -16,9 +16,10 @@ import scipy
 import sklearn
 
 from ml import dataset as ds
-from ml.data_config import REVISION, SOURCE, SOURCES, SourceSpec
+from ml.data_config import CATEGORIES, REVISION, SOURCE, SOURCES, SourceSpec
 
 DEFAULT_ARTIFACTS = ds.ROOT / "artifacts"
+MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 
 
 @dataclass
@@ -54,6 +55,33 @@ def decode_json(content: bytes, name: str) -> dict:
 
 def load_json(path: Path) -> dict:
     return decode_json(ds.read_bytes(path), path.name)
+
+
+def serving_contract() -> PreparedData:
+    """Approved Phase-1 snapshot, not a claim derived from an untrusted bundle.
+
+    Exact hashes were verified in Phases 1/2. Pinning them preserves the full
+    provenance equality check without reading any dataset during serving.
+    A new data-preparation identity requires an explicit reviewed contract update.
+    """
+    provenance = {
+        "dataset": "BANKING77",
+        "source_repository": SOURCE,
+        "source_revision": REVISION,
+        "raw_train_sha256": SOURCES[0].sha256,
+        "reserved_test_sha256_from_phase1_manifest": SOURCES[1].sha256,
+        "reserved_test_content_read": False,
+        "manifest_sha256": "4bf7c1e829b0559a899bf10235f373ac34b6fae73c96ae503599cfc3f8a94d58",
+        "processed_sha256": {
+            "train": "a2602652f80a1df6d4a1fbc5f25f799ffd8850ca5bf89ab39f4aad59fa2f0e79",
+            "validation": "80845e754110637c3e571bb39bdc8cf6ecc245a4b789fc573730734aa2cb49a3",
+        },
+        "train_rows": 8002,
+        "validation_rows": 2001,
+        "seed": 42,
+        "validation_fraction": 0.20,
+    }
+    return PreparedData([], [], [], [], sorted(CATEGORIES), provenance)
 
 
 def load_prepared(
@@ -179,13 +207,19 @@ def load_artifacts(root: Path, data: PreparedData, *, trusted: bool = False) -> 
         raise ds.DataError(
             "Joblib can execute code. Use --trust-local-artifacts only for your own trusted training output."
         )
+    if (root / "current.json").is_symlink():
+        raise ds.DataError("Artifact pointer must be a regular local file.")
     pointer = load_json(root / "current.json")
     run = pointer.get("run", "")
     if not isinstance(run, str) or not re.fullmatch(r"run-[0-9a-f]{32}", run):
         raise ds.DataError("Invalid local artifact run identifier.")
+    if (root / run).is_symlink():
+        raise ds.DataError("Artifact run must not be a symlink.")
     folder = (root / run).resolve()
     if folder.parent != root.resolve():
         raise ds.DataError("Artifact run must remain within its selected local directory.")
+    if (folder / "model_metadata.json").is_symlink():
+        raise ds.DataError("Model metadata must be a regular local file.")
     metadata_bytes = ds.read_bytes(folder / "model_metadata.json")
     if ds.sha256(metadata_bytes) != pointer.get("metadata_sha256"):
         raise ds.DataError("Model metadata checksum mismatch.")
@@ -201,6 +235,10 @@ def load_artifacts(root: Path, data: PreparedData, *, trusted: bool = False) -> 
             "Incompatible model metadata, versions or input provenance; retrain explicitly."
         )
     try:
+        from ml.train import build_model, configuration_for
+
+        if metadata["configuration"] != configuration_for(build_model()):
+            raise ds.DataError("Unapproved model training configuration.")
         expected_identity = ds.sha256(ds.json_bytes(metadata["identity"]))
         if (
             metadata["identity"]
@@ -218,12 +256,21 @@ def load_artifacts(root: Path, data: PreparedData, *, trusted: bool = False) -> 
         }
         if set(metadata["artifact_sha256"]) != names:
             raise ds.DataError("Artifact file inventory mismatch.")
+        allowed = names | {
+            "model_metadata.json",
+            "validation_recomputed_metrics.json",
+            "validation_recomputed_measurements.json",
+        }
+        if any(
+            p.name not in allowed or p.is_symlink() or not p.is_file() for p in folder.iterdir()
+        ):
+            raise ds.DataError("Unexpected files or symlinks in artifact run.")
         verified_models = {}
         for name in sorted(names):
             # Read once: the deserialized bytes must be the bytes actually checked.
             with (folder / name).open("rb") as handle:
-                content = handle.read(64 * 1024 * 1024 + 1)
-            if len(content) > 64 * 1024 * 1024:
+                content = handle.read(MAX_ARTIFACT_BYTES + 1)
+            if len(content) > MAX_ARTIFACT_BYTES:
                 raise ds.DataError(f"{name}: exceeds local artifact size limit.")
             if ds.sha256(content) != metadata["artifact_sha256"][name]:
                 raise ds.DataError(f"{name}: checksum mismatch; refusing deserialization.")

@@ -9,9 +9,11 @@ COPY app ./app
 COPY dashboard ./dashboard
 COPY ml ./ml
 RUN pip install --no-cache-dir . \
-    && useradd --create-home --uid 10001 intentops
+    && useradd --create-home --uid 10001 intentops \
+    && mkdir -p /opt/intentops/artifacts \
+    && chown intentops:intentops /opt/intentops/artifacts
 COPY .streamlit ./.streamlit
 COPY THIRD_PARTY_NOTICES.md ./
 USER intentops
 EXPOSE 8000 8501
-CMD ["python", "-m", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

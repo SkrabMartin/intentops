@@ -1,9 +1,9 @@
 # Model training and validation
 
 Phase 2 adds local CPU model training and validation; Phase 1 remains the data
-acquisition/verification layer. API/dashboard serving is deliberately unchanged:
-health says model_ready=false and prediction returns 503 model_not_ready. A local
-artifact is not a deployed model. No cloud inference or runtime download is used.
+acquisition/verification layer. Phase 3 adds optional trusted serving as documented in [serving.md](serving.md).
+A local artifact alone is not a deployed model: explicit trust and startup
+verification are required. No cloud inference or runtime download is used.
 
 ## Inputs and experiment protocol
 
@@ -149,7 +149,7 @@ vocabularies and serialized artifacts may contain source-derived terms; they rem
 local and are not published. Aggregate validation results are reported with source
 attribution. The notebook remains a cleared-output data exploration artifact.
 
-Next phase requires explicit authorization to integrate trusted artifact loading,
-startup readiness and real typed predictions into the API/dashboard. Verify
-provenance, compatibility, request limits and failure behavior first. Calibration,
-threshold design and one-time held-out assessment require explicit later protocols.
+Phase 3 serving uses the same strict verifier, adds configuration/inventory checks
+and pins the approved prepared-data identity without needing datasets at runtime.
+It loads once with explicit trust and returns real typed predictions. Calibration,
+threshold design and one-time held-out assessment still require explicit later protocols.
