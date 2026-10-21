@@ -15,10 +15,13 @@ dependencies = [
   "uvicorn>=0.34,<1",
   "streamlit>=1.42,<2",
   "httpx>=0.28,<1",
+  "pandas>=2.2,<4",
+  "scikit-learn>=1.6,<2",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+notebook = ["jupyterlab>=4,<5", "nbclient>=0.10,<1", "ipykernel>=6,<8"]
 
 [tool.setuptools.packages.find]
 include = ["app*", "ml*", "dashboard*"]

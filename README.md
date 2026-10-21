@@ -1,10 +1,11 @@
 # IntentOps
 
-**Phase 0 — scaffold only, no trained classifier yet.**
+**Phase 1 — dataset preparation available; no trained classifier yet.**
 
 IntentOps is an open-source foundation for developers building local customer-support
-intent classification. Future phases will use BANKING77 and a CPU-based classifier;
-this phase provides a tested FastAPI service and a small Streamlit status dashboard.
+intent classification. BANKING77 acquisition, strict validation, deterministic
+data preparation, and local exploration are implemented. A tested FastAPI service
+and Streamlit status dashboard remain available; CPU model training is deferred.
 
 No paid APIs, API keys, GPU, hosted database, or external hosting are required.
 Internet may be needed for the initial clone, Python installation, dependency
@@ -83,15 +84,80 @@ Tests use an in-process client and require no server, dataset, network, or GPU.
 The optional GitHub Actions workflow runs these checks on push/pull request;
 GitHub is not needed for local operation.
 
+## BANKING77 data preparation
+
+After activating the installed environment, run these commands from the root
+(identical in PowerShell, Linux, and macOS shells):
+
+```sh
+python -m ml.dataset fetch
+python -m ml.dataset verify
+python -m ml.dataset prepare --seed 42 --val-fraction 0.20
+python -m ml.dataset summary
+```
+
+Only `fetch` uses the internet. It intentionally acquires the official PolyAI
+CSVs at a pinned revision and checks approved SHA-256 hashes before publishing
+files into `data/raw/`. Existing mismatches are preserved and cause failure;
+inspect and move a mismatched file aside manually before retrying. Downloads use
+temporary files, bounded transfers, and finite timeouts, with no fallback hosts.
+Atomic raw-file publication requires a filesystem supporting hard links (such as
+NTFS or a standard Linux filesystem); unsupported filesystems fail safely.
+
+For **manual offline import**, copy the original `train.csv` and `test.csv` into
+`data/raw/`, then run `verify`, `prepare`, and `summary`. No network is required.
+Every command accepts `--raw-dir PATH`; preparation also accepts `--output-dir PATH`.
+Defaults are relative to the installed project modules, independent of the shell's
+current directory. Use separate, non-nested raw and processed locations.
+
+`verify` checks file hashes, UTF-8 CSV schema, nonempty text/category fields, exact
+counts and category inventory, then prints JSON with aggregate quality statistics.
+`summary` prints the same verified source EDA without creating files. `prepare`
+writes `data/processed/train.csv`, `validation.csv`, and `manifest.json` and prints
+the manifest. The manifest records source revision/hashes, category frequencies,
+row membership, configuration, library version, output hashes and overlap checks.
+No timestamps or machine-specific absolute paths appear in deterministic outputs.
+On PowerShell, save console JSON with `... > data/summary.json` if desired.
+
+Original CSVs use string `category`, preserving case and punctuation, including
+`Refund_not_showing_up` and `reverted_card_payment?`. Hugging Face's numeric `label`
+interface is different. The official 10,003-row training set alone is stratified
+into **8,002 train / 2,001 validation** rows with seed 42 and fraction 0.20.
+All 3,080 official test rows remain unchanged and reserved for later final assessment.
+Source IDs are zero-based data-record indices. Fraction must be finite and strictly
+between 0 and 1; seed is an integer from 0 through 4294967295. Each category must
+fit in both partitions; impossible settings fail clearly.
+
+Rows are neither normalized nor deduplicated. Exact-text overlaps are reported;
+this does not detect paraphrases or guarantee freedom from semantic leakage.
+Repeatability is byte-for-byte for the same source/configuration/library versions;
+dependencies are bounded rather than fully locked. Raw/derived data stay Git-ignored
+and excluded from Docker build contexts. Keep custom output paths out of Git too.
+See [data provenance and limitations](docs/data.md) for verified hashes and details.
+
+For the local EDA notebook (no automatic downloads or package installation):
+
+```sh
+python -m pip install -e '.[dev,notebook]'
+python -m jupyterlab notebooks/exploration.ipynb
+```
+
+With uv, use `uv pip install -e '.[dev,notebook]'`. Select this project's Python
+3.12 environment as the notebook kernel. Missing data produces setup instructions.
+The notebook displays frequencies, lengths, imbalance and duplicate statistics,
+without raw messages or model scores. Committed outputs are cleared.
+
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
 | `app/` | API, strict schemas, explicit unavailable inference boundary |
 | `dashboard/` | Streamlit interface and local service status |
-| `ml/` | Future dataset, training, and evaluation placeholders |
+| `ml/` | Verified data pipeline; training/evaluation remain placeholders |
 | `tests/` | Self-contained API and inference contract tests |
-| `notebooks/` | Valid notebook placeholder for later exploration |
+| `notebooks/` | Runnable, local-only BANKING77 exploration |
+| `data/` | Ignored local raw/processed data; never bundled in images |
+| `docs/` | Dataset provenance, preparation policy and limitations |
 | `artifacts/` | Tracked placeholder; generated binaries ignored |
 | `.streamlit/` | Headless, loopback, telemetry-disabled defaults |
 | `.github/workflows/` | Optional hosted test automation |
@@ -102,9 +168,10 @@ Original code is licensed under MIT; see `LICENSE` (IntentOps Contributors).
 BANKING77 retains its separate CC BY 4.0 license and attribution obligations;
 see `THIRD_PARTY_NOTICES.md`. No dataset is included.
 
-Deferred: BANKING77 processing, leak-free splits, CPU model training, calibration,
-confidence thresholds, real predictions, held-out evaluation, and evaluation
-dashboards. No model quality claims can be made at this stage.
+Deferred: CPU model training, calibration, confidence thresholds, real predictions,
+held-out evaluation, and evaluation dashboards. No model quality claims can be
+made at this stage. The API/dashboard keep their Phase-0 untrained status contract
+until a later serving phase; data preparation does not change model readiness.
 
 ## Troubleshooting
 

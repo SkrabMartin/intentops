@@ -11,6 +11,7 @@ COPY ml ./ml
 RUN pip install --no-cache-dir . \
     && useradd --create-home --uid 10001 intentops
 COPY .streamlit ./.streamlit
+COPY THIRD_PARTY_NOTICES.md ./
 USER intentops
 EXPOSE 8000 8501
 CMD ["python", "-m", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
