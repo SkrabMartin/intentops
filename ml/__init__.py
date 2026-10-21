@@ -1,1 +1,1 @@
-"""Future dataset, training, and evaluation tools; unused in Phase 0."""
+"""Offline dataset preparation, CPU model training, and validation tools."""

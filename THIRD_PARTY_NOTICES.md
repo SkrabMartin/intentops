@@ -23,6 +23,13 @@ The exact category inventory in `ml/data_config.py` reproduces upstream dataset
 metadata and is attributed to PolyAI under CC BY 4.0; surrounding original code
 remains MIT-licensed.
 
+Phase 2 generates local TF-IDF vocabularies, coefficients, validation reports and
+aggregate metrics using these separately licensed inputs. Serialized artifacts
+may contain learned source terms and remain Git-ignored. No model, vocabulary,
+customer-message text or generated experiment bundle is published. Aggregate
+validation numbers in docs/model.md are attributed to BANKING77 and describe a
+repartitioning of official training data, not the reserved official test split.
+
 Upstream citation: Iñigo Casanueva, Tadas Temcinas, Daniela Gerz, Matthew Henderson,
 and Ivan Vulić (2020), [Efficient Intent Detection with Dual Sentence Encoders](https://arxiv.org/abs/2003.04807),
 Proceedings of the 2nd Workshop on NLP for ConvAI, ACL 2020.
