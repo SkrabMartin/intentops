@@ -1,10 +1,12 @@
 # IntentOps
 
-**Phase 4 — local calibration and human-review recommendations, enabled explicitly.**
+**Phase 5 — local single/batch inference, private CSV import/export and measured serving performance.**
 
 IntentOps is an open-source, CPU-only customer-support intent classifier using
 BANKING77 and a TF-IDF/logistic-regression pipeline. It includes verified data
-preparation, local training/validation, FastAPI predictions and a Streamlit interface.
+preparation, local training/validation, FastAPI predictions and a Streamlit interface
+for single messages and bounded CSV batches. It covers 77 English banking intents;
+it is a portfolio application, not a certified banking decision system.
 No API keys, paid model services, GPU, hosted database or mandatory cloud hosting.
 
 Initial dependency/image/dataset setup may need internet. Once installed and a
@@ -12,6 +14,127 @@ compatible model is available, inference runs locally without external calls.
 Models, learned vocabularies, datasets and internal reports stay outside Git and
 Docker build contexts. Training/downloads never happen on application startup.
 Dependencies are bounded, not fully locked; exact model environment checks apply.
+
+## Repository Architecture
+
+Tracked source and configuration (generated data/model/policy bundles are excluded):
+
+```text
+intentops/
+├── app/                         # Typed FastAPI contracts and trusted in-memory inference
+│   ├── api.py                   # Health, readiness, metadata, single and batch routes
+│   ├── inference.py             # One verified model/policy; serialized vectorized inference
+│   ├── schemas.py               # Strict request, prediction and recommendation DTOs
+│   ├── request_limits.py        # Bounded batch JSON and sanitized rejection
+│   └── local_http.py            # Shared local-only API origin validation
+├── ml/                          # Explicit offline data/model/policy operator tools
+│   ├── dataset.py               # Provenance, acquisition, validation and preparation
+│   ├── data_config.py           # Approved upstream identity and label inventory
+│   ├── train.py                 # Fixed TF-IDF + logistic regression training
+│   ├── evaluate.py              # Validation-only evaluation
+│   ├── model_support.py         # Artifact integrity, environment and trust checks
+│   ├── calibration.py           # Temperature scaling and selective-risk statistics
+│   ├── calibrate.py             # Explicit development then one-time internal audit
+│   └── review_policy.py         # Separate verified JSON policy storage
+├── dashboard/                   # Transient single-message and CSV interfaces
+│   ├── streamlit_app.py         # Status, audit caveat and Single Message / Batch CSV tabs
+│   ├── batch_ui.py              # Upload, explicit Classify CSV and in-memory download
+│   └── csv_workflow.py          # CSV validation, bounded chunks and text-free export
+├── scripts/
+│   └── benchmark_serving.py     # Real sequential HTTP latency/throughput measurements
+├── tests/                       # Synthetic data/model/trust/API/batch/CSV/UI/privacy tests
+├── notebooks/
+│   └── exploration.ipynb        # Optional EDA, no online service dependency
+├── docs/
+│   ├── data.md                  # Dataset provenance and partition policy
+│   ├── model.md                 # Fixed classifier and validation limitations
+│   ├── calibration.md           # Frozen internal protocol, results and risk caveats
+│   ├── serving.md               # Trust, local startup, overlays and offline operation
+│   ├── batch.md                 # JSON/CSV contracts, privacy and smoke checks
+│   └── benchmarks.md            # Methodology and observed performance
+├── artifacts/
+│   └── .gitkeep                # Tracked empty marker only; all model bundles ignored
+├── .streamlit/config.toml       # Local defaults, telemetry off and upload cap
+├── .github/workflows/tests.yml  # Synthetic CI lint, formatting and tests
+├── Dockerfile                   # Non-root local image; no data or model COPY
+├── compose.yaml                 # Safe base no-model services
+├── compose.model.yaml           # Explicit model trust and optional one-time setup
+├── compose.policy.yaml          # Independent policy opt-in and explicit setup tools
+├── docker-constraints.txt        # Preserve model dependency compatibility
+├── pyproject.toml               # Python 3.12 packages and development configuration
+├── README.md
+├── LICENSE                      # MIT for original code
+└── THIRD_PARTY_NOTICES.md        # Separate BANKING77 CC BY 4.0 attribution
+```
+
+Runtime data flow:
+
+```text
+Streamlit Single Message / Batch CSV
+  -> FastAPI /predict or /predict/batch
+  -> already-verified in-memory TF-IDF / Logistic Regression
+  -> optional verified temperature / review-policy sidecar
+  -> typed predictions and recommendations -> UI / text-free CSV export
+```
+
+`ml/` tools run explicitly before serving; request processing does not train,
+calibrate, audit, download or read datasets/artifacts. `tests/` covers synthetic
+preparation, training/evaluation, calibration, policy trust, API/batch, CSV, UI,
+privacy and benchmark contracts. The notebook is optional exploration only.
+
+**Local-only storage:** `data/`, model contents under `artifacts/`, and `policies/`
+are ignored operator-owned files, excluded from Docker builds. The only published
+artifact-directory entry is `.gitkeep`. Reports, measurements, uploads and
+screenshots are not public repository assets.
+
+| Local serving mode | Compose files | Behavior |
+| --- | --- | --- |
+| Base | `compose.yaml` | Health works; no trusted model; prediction/readiness 503 |
+| Model only | Base + `compose.model.yaml` | Raw scores, every result recommends human review |
+| Model + policy | Base + model + `compose.policy.yaml` | Calibrated scores and frozen review recommendations |
+
+Use the exact commands below or [serving operations](docs/serving.md). Startup
+never fetches a model. **No paid API or hosted instance is required.** See
+[data provenance](docs/data.md), [model methodology](docs/model.md),
+[calibration and audit](docs/calibration.md), [batch/CSV usage](docs/batch.md) and
+[benchmarks](docs/benchmarks.md).
+
+**Audit caveat:** the frozen policy's one-sided 95% upper error bound was **10.13%**,
+above its **10.00%** demonstration budget. Calibration and recommendations do not
+guarantee semantic correctness, new-company performance or out-of-domain detection.
+No ticket assignment, approval or dispatch is performed.
+
+## Batch API and CSV workflow
+
+`POST /predict/batch` accepts 1–100 trimmed strings of 1–5000 characters. Validation
+is all-or-nothing; results preserve input order and the single-prediction contract.
+An 8 MiB batch body ceiling applies before JSON parsing. Compressed/ambiguous JSON
+bodies are rejected. Model and policy are loaded once; inference is vectorized
+under the existing serial CPU limit.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18000/predict/batch -ContentType 'application/json' -Body '{"messages":["When will my new card arrive?","Hello, please help."]}'
+```
+
+In **Batch CSV**, upload UTF-8/BOM CSV with exactly the `text` header, at most
+**1 MiB / 200 data rows**. Click **Classify CSV** to send valid rows in chunks of
+at most 100; uploading alone never classifies. Structural CSV errors reject the
+file; blank/overlong text rows remain explicit row errors. The UI offers a
+fictional sample download; equivalently save these invented lines as UTF-8:
+
+```csv
+text
+When will my new card arrive?
+I was charged twice for the same card payment.
+"Hello, please help."
+```
+
+Download results with generated row indexes, prediction/score type, recommendation,
+model/policy versions and row status. Source text and optional IDs are excluded;
+formula-like output cells are escaped. Everything stays transient/in memory.
+Changing the input or service identity clears previous results. Earlier successful
+chunks remain visible if an API error occurs; remaining rows get explicit errors.
+See [batch contracts and smoke checks](docs/batch.md).
 
 ## Native setup (Python 3.12)
 
@@ -160,6 +283,22 @@ audit of previously evaluated validation data, not an untouched official test.
 See [method, formulas, limitations and aggregate results](docs/calibration.md) and
 [policy storage/operations](docs/serving.md). Generated policies and reports stay local.
 
+## Measured local HTTP performance
+
+On 2026-10-22, a policy-enabled Windows native run (concurrency 1, 200 single
+samples,20 samples at each batch size,5 excluded warmups per case) measured single
+P50 **20.50 ms**, P95 **28.74 ms**, P99 **34.58 ms**. Batch100 measured P50
+**34.07 ms**, about **2816 messages/s**. All responses validated, zero errors.
+A separate policy-enabled Docker run measured single P50 **15.92 ms**, P95
+**22.35 ms**, P99 **26.81 ms**; batch100 P50 **27.84 ms**, about **3559 messages/s**.
+These include HTTP and typed client validation, not pure model compute or an SLA.
+The environments differ; this is not a controlled platform comparison.
+See [hardware, complete cases, methodology and caveats](docs/benchmarks.md).
+
+```powershell
+python scripts/benchmark_serving.py --mode native --url http://127.0.0.1:18000 > data/benchmark-native.json
+```
+
 ## Development and tests
 
 ```sh
@@ -287,29 +426,14 @@ or real-customer performance. Optional Phase-4 calibration and review recommenda
 use a separate internal validation protocol; see [calibration results](docs/calibration.md). **API/UI inference requires an explicitly trusted, verified loaded model.**
 See [model methodology, configuration and limitations](docs/model.md).
 
-## Layout
-
-| Path | Purpose |
-| --- | --- |
-| `app/` | API, strict schemas, one-time trusted model loading and real inference |
-| `dashboard/` | Streamlit interface and local service status |
-| `ml/` | Verified data preparation, CPU training, validation and artifact integrity |
-| `tests/` | Self-contained API and inference contract tests |
-| `notebooks/` | Runnable, local-only BANKING77 exploration |
-| `data/` | Ignored local raw/processed data; never bundled in images |
-| `docs/` | Dataset provenance, preparation policy and limitations |
-| `artifacts/` | Ignored local models, provenance, validation reports and plots |
-| `.streamlit/` | Headless, loopback, telemetry-disabled defaults |
-| `.github/workflows/` | Optional hosted test automation |
-
 ## Licensing and deferred work
 
 Original code is licensed under MIT; see `LICENSE` (IntentOps Contributors).
 BANKING77 retains its separate CC BY 4.0 license and attribution obligations;
 see `THIRD_PARTY_NOTICES.md`. No dataset is included.
 
-Deferred: bounded batch/CSV work, performance polish and separately authorized
-held-out test evaluation. No external ticket routing is implemented. Validation results remain
+Deferred to Phase 6: open-source v1.0 release preparation, final documentation
+and separately authorized one-time held-out evaluation. No external ticket routing is implemented. Validation results remain
 benchmark-specific; real serving does not establish production quality.
 
 ## Troubleshooting

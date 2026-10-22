@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 MAX_TEXT_LENGTH = 5000
+MAX_BATCH_MESSAGES = 100
 MessageText = Annotated[
     str,
     StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=MAX_TEXT_LENGTH),
@@ -17,6 +18,14 @@ class StrictSchema(BaseModel):
 
 class PredictionRequest(StrictSchema):
     text: MessageText
+
+
+class BatchPredictionRequest(StrictSchema):
+    messages: list[MessageText] = Field(
+        min_length=1,
+        max_length=MAX_BATCH_MESSAGES,
+        examples=[["When will my new card arrive?", "I was charged twice for a card payment."]],
+    )
 
 
 class HealthResponse(StrictSchema):
@@ -153,7 +162,9 @@ class PredictionResponse(StrictSchema):
 
 
 class ErrorDetail(StrictSchema):
-    code: Literal["model_not_ready", "inference_failed"] = "model_not_ready"
+    code: Literal[
+        "model_not_ready", "inference_failed", "payload_too_large", "unsupported_encoding"
+    ] = "model_not_ready"
     message: str = (
         "No verified model is loaded. Enable trusted local artifacts and restart the API."
     )
@@ -161,3 +172,27 @@ class ErrorDetail(StrictSchema):
 
 class ErrorResponse(StrictSchema):
     error: ErrorDetail
+
+
+class BatchPredictionResponse(StrictSchema):
+    predictions: list[PredictionResponse] = Field(min_length=1, max_length=MAX_BATCH_MESSAGES)
+
+    @model_validator(mode="after")
+    def consistent(self):
+        identities = {
+            (p.model_version, p.policy_status, p.policy_version, p.score_type, p.policy_threshold)
+            for p in self.predictions
+        }
+        if len(identities) != 1:
+            raise ValueError("A batch must use one model and policy snapshot.")
+        return self
+
+
+class ValidationIssue(StrictSchema):
+    loc: list[str | int]
+    type: str
+    msg: str
+
+
+class ValidationErrorResponse(StrictSchema):
+    detail: list[ValidationIssue]

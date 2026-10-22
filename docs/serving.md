@@ -259,3 +259,23 @@ Docker pins model-related packages in docker-constraints.txt to preserve the
 existing Phase-3 model environment (pandas 3.0.6, sklearn 1.9.1, NumPy 2.5.4,
 SciPy 1.18.1, joblib 1.6.0). This is not a complete dependency lock. Exact Python
 and package checks still apply; an incompatible base image fails closed.
+
+
+## Phase 5 batch and CSV operation
+
+The existing single endpoints and three serving modes remain intact. New
+POST /predict/batch accepts 1–100 messages and returns ordered existing typed
+predictions, with all-or-nothing validation and an 8 MiB body ceiling before JSON
+parsing. It uses the startup-loaded model and frozen sidecar, vectorized under
+one CPU/threadpool lock. No new artifact, data read, fit, download or audit occurs.
+
+The Streamlit Batch CSV tab accepts <=1 MiB / <=200 UTF-8/BOM rows, exactly text
+column. Explicit Classify CSV sends valid rows in <=100 chunks. Results download
+contains row numbers and prediction/review metadata, no source text or IDs.
+Both upload widget and server have a1 MiB upload limit. See [batch.md](batch.md)
+for validation/error/export details and actual smoke commands, and
+[benchmarks.md](benchmarks.md) for measured HTTP workloads. Existing trust opt-ins,
+read-only volumes, non-root serving and policy audit warning are unchanged.
+
+Phase 5 does not rerun training, calibration or policy audit. With existing verified
+bundles, use only the serving startup commands; do not rerun setup-profile tools.

@@ -1,12 +1,12 @@
 """Local API dashboard; customer text is submitted only on an explicit Classify click."""
 
-import ipaddress
 import os
 
 import httpx
 import streamlit as st
 from pydantic import ValidationError
 
+from app.local_http import local_api_url
 from app.schemas import (
     HealthResponse,
     ModelInfoResponse,
@@ -14,6 +14,7 @@ from app.schemas import (
     PredictionRequest,
     PredictionResponse,
 )
+from dashboard.batch_ui import render_csv
 
 st.set_page_config(page_title="IntentOps", page_icon="💬")
 st.title("IntentOps")
@@ -21,14 +22,9 @@ st.caption("Open-source, local-first customer support intent classification")
 base_url = os.environ.get("INTENTOPS_API_URL", "http://127.0.0.1:8000").rstrip("/")
 ready = False
 info = None
+policy = None
 try:
-    url = httpx.URL(base_url)
-    try:
-        local = ipaddress.ip_address(url.host).is_loopback
-    except ValueError:
-        local = url.host in ("localhost", "api")
-    if url.scheme != "http" or not local or url.userinfo or url.query or url.path not in ("", "/"):
-        raise ValueError("Only local HTTP API addresses are allowed")
+    base_url = local_api_url(base_url)
     with httpx.Client(
         base_url=base_url, timeout=5.0, trust_env=False, follow_redirects=False
     ) as client:
@@ -91,69 +87,82 @@ if ready:
             "Policy status unavailable or invalid. Predictions must carry a valid recommendation; no action is executed."
         )
 
-text = st.text_area("Customer message", max_chars=5000, placeholder="Use a fictional example.")
-try:
-    payload = PredictionRequest(text=text)
-    valid = True
-except ValidationError:
-    payload = None
-    valid = False
-st.caption(
-    "Enter 1–5000 nonblank characters. Text is sent only to the local API when you click Classify; it is not saved."
-)
-if st.button("Classify", disabled=not ready or not valid):
+single_tab, csv_tab = st.tabs(["Single Message", "Batch CSV"])
+with single_tab:
+    text = st.text_area("Customer message", max_chars=5000, placeholder="Use a fictional example.")
     try:
-        with httpx.Client(
-            base_url=base_url, timeout=5.0, trust_env=False, follow_redirects=False
-        ) as client:
-            response = client.post("/predict", json=payload.model_dump())
-            response.raise_for_status()
-            prediction = PredictionResponse.model_validate(response.json())
-        st.subheader("Predicted intent")
-        st.success(prediction.intent)
-        st.caption(f"Model: {prediction.model_version}")
-        if prediction.policy_status != "ready":
-            st.warning("Human review suggested (no validated review policy active)")
-        elif prediction.recommendation == "suggest_automatic":
-            st.info(
-                "Recommendation: Suggested automatic classification — meets configured development threshold"
-            )
-        else:
-            st.warning(
-                "Recommendation: Human review — "
-                + (
-                    "review-all policy"
-                    if prediction.reason == "review_all_policy"
-                    else "below calibrated threshold"
+        payload = PredictionRequest(text=text)
+        valid = True
+    except ValidationError:
+        payload = None
+        valid = False
+    st.caption(
+        "Enter 1–5000 nonblank characters. Text is sent only to the local API when you click Classify; it is not saved."
+    )
+    if st.button("Classify", disabled=not ready or not valid):
+        try:
+            with httpx.Client(
+                base_url=base_url, timeout=5.0, trust_env=False, follow_redirects=False
+            ) as client:
+                response = client.post("/predict", json=payload.model_dump())
+                response.raise_for_status()
+                prediction = PredictionResponse.model_validate(response.json())
+            st.subheader("Predicted intent")
+            st.success(prediction.intent)
+            st.caption(f"Model: {prediction.model_version}")
+            if prediction.policy_status != "ready":
+                st.warning("Human review suggested (no validated review policy active)")
+            elif prediction.recommendation == "suggest_automatic":
+                st.info(
+                    "Recommendation: Suggested automatic classification — meets configured development threshold"
                 )
+            else:
+                st.warning(
+                    "Recommendation: Human review — "
+                    + (
+                        "review-all policy"
+                        if prediction.reason == "review_all_policy"
+                        else "below calibrated threshold"
+                    )
+                )
+            st.caption(
+                f"Policy status: {prediction.policy_status} · Policy: {prediction.policy_version or 'none'}"
             )
-        st.caption(
-            f"Policy status: {prediction.policy_status} · Policy: {prediction.policy_version or 'none'}"
-        )
-        score_label = (
-            "Temperature-scaled probability"
-            if prediction.score_type == "temperature_scaled_probability"
-            else "Uncalibrated probability"
-        )
-        st.dataframe(
-            [{"Intent": p.intent, score_label: p.score} for p in prediction.top_predictions],
-            hide_index=True,
-        )
-    except httpx.TimeoutException:
-        st.error("Classification timed out. Try again after checking the local API.")
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 503:
-            st.warning("Model unavailable. Check local artifacts and restart the API.")
-        elif exc.response.status_code == 422:
-            st.error("Invalid input. Enter 1–5000 nonblank characters.")
-        else:
+            score_label = (
+                "Temperature-scaled probability"
+                if prediction.score_type == "temperature_scaled_probability"
+                else "Uncalibrated probability"
+            )
+            st.dataframe(
+                [{"Intent": p.intent, score_label: p.score} for p in prediction.top_predictions],
+                hide_index=True,
+            )
+        except httpx.TimeoutException:
+            st.error("Classification timed out. Try again after checking the local API.")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 503:
+                st.warning("Model unavailable. Check local artifacts and restart the API.")
+            elif exc.response.status_code == 422:
+                st.error("Invalid input. Enter 1–5000 nonblank characters.")
+            else:
+                st.error(
+                    "The local API reported an inference error. Inspect the service and restart if needed."
+                )
+        except httpx.HTTPError:
+            st.error("The local API is unreachable. Check the service before retrying.")
+        except (ValueError, ValidationError):
             st.error(
-                "The local API reported an inference error. Inspect the service and restart if needed."
+                "The local API returned an invalid prediction response. No result is displayed."
             )
-    except httpx.HTTPError:
-        st.error("The local API is unreachable. Check the service before retrying.")
-    except (ValueError, ValidationError):
-        st.error("The local API returned an invalid prediction response. No result is displayed.")
+with csv_tab:
+    render_csv(
+        base_url,
+        ready=ready,
+        identity={
+            "model": info.model_dump() if info is not None else None,
+            "policy": policy.model_dump() if policy is not None else None,
+        },
+    )
 st.caption(
     "Scores and development-policy recommendations are not correctness guarantees or out-of-domain detection. No routing or external action is executed. A human remains responsible."
 )

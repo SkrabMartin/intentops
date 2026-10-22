@@ -9,7 +9,7 @@ COPY docker-constraints.txt ./
 COPY app ./app
 COPY dashboard ./dashboard
 COPY ml ./ml
-RUN pip install --no-cache-dir --constraint docker-constraints.txt . \
+RUN pip install --no-cache-dir --timeout 60 --retries 3 --constraint docker-constraints.txt . \
     && useradd --create-home --uid 10001 intentops \
     && mkdir -p /opt/intentops/artifacts /opt/intentops/policies \
     && chown intentops:intentops /opt/intentops/artifacts /opt/intentops/policies

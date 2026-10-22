@@ -9,6 +9,8 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from app.schemas import (
+    BatchPredictionRequest,
+    BatchPredictionResponse,
     ModelInfoResponse,
     PolicyInfoResponse,
     PredictionRequest,
@@ -124,68 +126,77 @@ class ModelService:
         )
 
     def predict(self, text: str) -> PredictionResponse:
-        text = PredictionRequest(text=text).text
-        if not self.ready:
-            raise ModelNotReadyError("No trained model is ready.")
-        try:
-            # Serial local inference bounds concurrent threadpool changes and CPU use.
-            with self._lock, threadpool_limits(limits=1):
-                values = np.asarray(self.model.predict_proba([text]), dtype=float)
-                if self.policy is not None:
-                    raw = cal.probabilities(values)
-                    decision = self.model.decision_function([text])
-                    if not np.allclose(cal.scaled(decision, 1.0), raw, atol=1e-12, rtol=1e-12):
-                        raise ValueError("Inconsistent decision scores")
-                    values = cal.scaled(decision, self.policy.frozen.temperature)
-                    if not np.array_equal(values.argmax(axis=1), raw.argmax(axis=1)):
-                        raise ValueError("Changed ranking")
-            labels = list(self.model.classes_)
-            if (
-                values.shape != (1, len(labels))
-                or not np.isfinite(values).all()
-                or (values < 0).any()
-                or (values > 1).any()
-                or not np.allclose(values.sum(axis=1), 1, atol=1e-6)
-            ):
-                raise ValueError("Invalid probabilities")
-            order = np.argsort(-values[0], kind="stable")[:3]
-            scores = [
-                PredictionScore(intent=str(labels[i]), score=float(values[0, i])) for i in order
-            ]
-            policy_info = self.policy_info()
-            automatic = (
-                self.policy is not None
-                and policy_info.threshold is not None
-                and scores[0].score >= policy_info.threshold
-            )
-            reason = (
-                "policy_not_available"
-                if self.policy is None
-                else "meets_configured_threshold"
-                if automatic
-                else "review_all_policy"
-                if policy_info.threshold is None
-                else "below_configured_threshold"
-            )
-            return PredictionResponse(
-                intent=scores[0].intent,
-                model_version=self.metadata["model_version"],
-                top_predictions=scores,
-                score_type="temperature_scaled_probability"
-                if self.policy
-                else "uncalibrated_model_probability",
-                recommendation="suggest_automatic" if automatic else "needs_review",
-                policy_status=policy_info.status,
-                policy_version=policy_info.policy_version,
-                policy_threshold=policy_info.threshold,
-                reason=reason,
-            )
-        except Exception:  # noqa: BLE001 -- model errors must never expose submitted text.
-            # Fail closed after a severe inference failure; restart required.
-            self.model = None
-            self.metadata = None
-            self.reason = "internal_error"
-            logger.error(
-                "Local inference failed; model readiness disabled. Restart after operator inspection."
-            )
-            raise InferenceError("Local inference failed.") from None
+        # Single and batch share normalization, serialization and recommendation logic.
+        return self.predict_batch([PredictionRequest(text=text).text]).predictions[0]
+
+    def predict_batch(self, messages: list[str]) -> BatchPredictionResponse:
+        messages = BatchPredictionRequest(messages=messages).messages
+        # One bounded vectorized operation; readiness and result assembly share the lock.
+        with self._lock:
+            if not self.ready:
+                raise ModelNotReadyError("No trained model is ready.")
+            try:
+                with threadpool_limits(limits=1):
+                    values = np.asarray(self.model.predict_proba(messages), dtype=float)
+                    if self.policy is not None:
+                        raw = cal.probabilities(values)
+                        decision = self.model.decision_function(messages)
+                        if not np.allclose(cal.scaled(decision, 1.0), raw, atol=1e-12, rtol=1e-12):
+                            raise ValueError("Inconsistent decision scores")
+                        values = cal.scaled(decision, self.policy.frozen.temperature)
+                        if not np.array_equal(values.argmax(axis=1), raw.argmax(axis=1)):
+                            raise ValueError("Changed ranking")
+                labels = list(self.model.classes_)
+                if (
+                    values.shape != (len(messages), len(labels))
+                    or not np.isfinite(values).all()
+                    or (values < 0).any()
+                    or (values > 1).any()
+                    or not np.allclose(values.sum(axis=1), 1, atol=1e-6)
+                ):
+                    raise ValueError("Invalid probabilities")
+                policy_info = self.policy_info()
+                results = []
+                for row in values:
+                    order = np.argsort(-row, kind="stable")[:3]
+                    scores = [
+                        PredictionScore(intent=str(labels[i]), score=float(row[i])) for i in order
+                    ]
+                    automatic = (
+                        self.policy is not None
+                        and policy_info.threshold is not None
+                        and scores[0].score >= policy_info.threshold
+                    )
+                    reason = (
+                        "policy_not_available"
+                        if self.policy is None
+                        else "meets_configured_threshold"
+                        if automatic
+                        else "review_all_policy"
+                        if policy_info.threshold is None
+                        else "below_configured_threshold"
+                    )
+                    results.append(
+                        PredictionResponse(
+                            intent=scores[0].intent,
+                            model_version=self.metadata["model_version"],
+                            top_predictions=scores,
+                            score_type="temperature_scaled_probability"
+                            if self.policy
+                            else "uncalibrated_model_probability",
+                            recommendation="suggest_automatic" if automatic else "needs_review",
+                            policy_status=policy_info.status,
+                            policy_version=policy_info.policy_version,
+                            policy_threshold=policy_info.threshold,
+                            reason=reason,
+                        )
+                    )
+                return BatchPredictionResponse(predictions=results)
+            except Exception:  # noqa: BLE001 -- no input text or model exception details may escape.
+                self.model = None
+                self.metadata = None
+                self.reason = "internal_error"
+                logger.error(
+                    "Local inference failed; model readiness disabled. Restart after operator inspection."
+                )
+                raise InferenceError("Local inference failed.") from None
