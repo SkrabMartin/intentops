@@ -44,3 +44,14 @@ artifacts from BANKING77. These remain local and retain separate CC BY 4.0
 provenance obligations; the original calibration/serving code remains MIT.
 Published aggregate internal-development results are attributed to BANKING77;
 no source rows, model vocabulary or generated policy files are distributed.
+
+## Installed software dependencies
+
+Python packages listed in pyproject.toml and their transitive dependencies retain
+their own license and copyright notices. This source distribution does not
+relicense or vendor their implementations. Inspect the installed distribution
+metadata/license files for the actual resolved versions (`python -m pip list`
+and `python -m pip show PACKAGE`); bounded ranges and Docker constraints are not
+a universal lockfile or a complete software bill of materials. Docker base images
+and operating-system components likewise retain their separate notices. Original
+IntentOps MIT permission does not override any third-party terms.

@@ -1,6 +1,6 @@
 # IntentOps
 
-**Phase 5 — local single/batch inference, private CSV import/export and measured serving performance.**
+**v1.0.0 — local intent classification, batch CSV and experimental human review.**
 
 IntentOps is an open-source, CPU-only customer-support intent classifier using
 BANKING77 and a TF-IDF/logistic-regression pipeline. It includes verified data
@@ -14,6 +14,13 @@ compatible model is available, inference runs locally without external calls.
 Models, learned vocabularies, datasets and internal reports stay outside Git and
 Docker build contexts. Training/downloads never happen on application startup.
 Dependencies are bounded, not fully locked; exact model environment checks apply.
+
+Original source uses the [MIT license](LICENSE). BANKING77 and reproduced category
+metadata retain separate [CC BY 4.0 attribution](THIRD_PARTY_NOTICES.md); no model,
+data or generated policy is bundled. See [changelog](CHANGELOG.md),
+[contributing](CONTRIBUTING.md), [security](SECURITY.md),
+[installation/recovery and release gates](docs/release.md), and
+[GitHub releases](https://github.com/SkrabMartin/intentops/releases).
 
 ## Repository Architecture
 
@@ -51,6 +58,7 @@ intentops/
 │   ├── calibration.md           # Frozen internal protocol, results and risk caveats
 │   ├── serving.md               # Trust, local startup, overlays and offline operation
 │   ├── batch.md                 # JSON/CSV contracts, privacy and smoke checks
+│   ├── release.md               # Fresh install, offline proof, rollback and release gates
 │   └── benchmarks.md            # Methodology and observed performance
 ├── artifacts/
 │   └── .gitkeep                # Tracked empty marker only; all model bundles ignored
@@ -62,6 +70,11 @@ intentops/
 ├── compose.policy.yaml          # Independent policy opt-in and explicit setup tools
 ├── docker-constraints.txt        # Preserve model dependency compatibility
 ├── pyproject.toml               # Python 3.12 packages and development configuration
+├── .gitignore                   # Exclude private/generated files from Git
+├── .dockerignore                # Exclude private/generated files from image builds
+├── CHANGELOG.md                  # Delivered v1.0 capabilities and limitations
+├── CONTRIBUTING.md               # Local development and privacy-safe contributions
+├── SECURITY.md                   # Verified disclosure-channel limitations
 ├── README.md
 ├── LICENSE                      # MIT for original code
 └── THIRD_PARTY_NOTICES.md        # Separate BANKING77 CC BY 4.0 attribution
@@ -89,9 +102,9 @@ screenshots are not public repository assets.
 
 | Local serving mode | Compose files | Behavior |
 | --- | --- | --- |
-| Base | `compose.yaml` | Health works; no trusted model; prediction/readiness 503 |
-| Model only | Base + `compose.model.yaml` | Raw scores, every result recommends human review |
-| Model + policy | Base + model + `compose.policy.yaml` | Calibrated scores and frozen review recommendations |
+| Base (trust unset/`0`) | `compose.yaml` | Health works; no trusted model; prediction/readiness 503 |
+| Model only (`INTENTOPS_TRUST_LOCAL_ARTIFACTS=1`) | Base + `compose.model.yaml` | Raw scores, every result recommends human review |
+| Model + policy (also `INTENTOPS_ENABLE_REVIEW_POLICY=1`) | Base + model + `compose.policy.yaml` | Calibrated scores and frozen review recommendations |
 
 Use the exact commands below or [serving operations](docs/serving.md). Startup
 never fetches a model. **No paid API or hosted instance is required.** See
@@ -103,6 +116,63 @@ never fetches a model. **No paid API or hosted instance is required.** See
 above its **10.00%** demonstration budget. Calibration and recommendations do not
 guarantee semantic correctness, new-company performance or out-of-domain detection.
 No ticket assignment, approval or dispatch is performed.
+
+## Quick Start (Docker)
+
+First install, PowerShell from a clone (Docker Engine/Compose required):
+
+```powershell
+git clone https://github.com/SkrabMartin/intentops.git
+cd intentops
+$env:INTENTOPS_API_PORT = '18000'
+docker compose build
+docker compose up -d
+Invoke-RestMethod http://127.0.0.1:18000/health
+```
+
+Open the dashboard at http://127.0.0.1:8501 and API docs at
+http://127.0.0.1:18000/docs. **This source-only install has no model:** liveness is
+200, readiness/prediction are 503 and classification controls are disabled.
+Initial image/package downloads may need internet. Port 18000 avoids conflicts
+with another application on 8000; both services bind to loopback.
+
+For first-time inference, explicitly obtain and prepare the approved data, then
+generate a model in the serving environment using the setup steps below and
+[fresh-user instructions](docs/release.md#explicit-fresh-user-model-and-policy-bootstrap).
+Dataset fetch acquires **both** official train and reserved test files. These
+future-user commands were **not executed during this release**; release checks use
+fictional fixtures and preserved trusted artifacts, with no real refit or re-audit.
+
+After setup, ordinary restart with a compatible model (no data/download/training):
+
+```powershell
+$env:INTENTOPS_API_PORT = '18000'
+docker compose -f compose.yaml -f compose.model.yaml up -d --pull never --no-build
+Invoke-RestMethod http://127.0.0.1:18000/ready
+# Stop this stack safely; volumes remain.
+docker compose -f compose.yaml -f compose.model.yaml stop
+```
+
+Add `-f compose.policy.yaml` to both commands for an already-generated compatible
+policy. Do not rerun setup or its once-only audit on ordinary restart.
+See [genuine network-disabled proof and rollback](docs/release.md).
+
+## API overview
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Process liveness, 200 even with no model |
+| `GET /ready` | Verified loaded model, otherwise 503 |
+| `GET /model/info` | Model status, version and sanitized reason |
+| `GET /policy/info` | Independent policy state and aggregate internal audit |
+| `POST /predict` | `{"text":"When will my new card arrive?"}` |
+| `POST /predict/batch` | `{"messages":["When will my new card arrive?"]}` |
+| `GET /docs` | Interactive OpenAPI schemas |
+
+Examples are fictional. A prediction returns intent, model version, three ranked
+intent/score pairs, score type, recommendation, policy status/version/threshold
+and reason. `needs_review` is mandatory without an active policy. Scores and
+`suggest_automatic` are experimental recommendations; no routing is performed.
 
 ## Batch API and CSV workflow
 
@@ -138,7 +208,7 @@ See [batch contracts and smoke checks](docs/batch.md).
 
 ## Native setup (Python 3.12)
 
-From the repository root (PowerShell):
+First install from the cloned repository root (PowerShell):
 
 ```powershell
 py -3.12 -m venv .venv
@@ -146,6 +216,18 @@ py -3.12 -m venv .venv
 python -m pip install -e '.[dev]'
 ```
 
+For a source-only installation check, start the API with:
+
+```powershell
+$env:INTENTOPS_TRUST_LOCAL_ARTIFACTS = '0'
+python -m uvicorn app.api:app --host 127.0.0.1 --port 18000 --no-access-log
+```
+
+Use the Streamlit command below in another terminal: health is 200,
+readiness/prediction 503 and the UI shows unavailable. Stop this API with Ctrl+C
+before switching to model-enabled startup on the same port.
+Enable trust only after deliberately creating your own compatible bundle.
+Ordinary restart uses the existing environment and serving commands, not training.
 Use the existing environment if already set up. With uv: `uv pip install -e '.[dev]'`.
 Linux/macOS can use `python3.12 -m venv .venv` and `source .venv/bin/activate`.
 A trusted compatible model must exist under artifacts/; if absent, explicitly
@@ -190,7 +272,7 @@ Classify only when the API reports a ready model and valid input, and submits
 text only on click to its configured local API. Messages are ephemeral, not logged
 or stored. Usage telemetry and public-IP lookup remain disabled.
 
-## Docker: explicit compatible-model setup and serving
+## Docker: first-time compatible-model setup and serving
 
 A Windows Python 3.12.13 model must not be force-loaded in Linux Python 3.12.15.
 Build the API image and run the existing training command in that same environment.
@@ -199,7 +281,7 @@ raw/test.csv is not exposed. A project-scoped named volume preserves the generat
 Linux bundle. The serving API mounts that volume read-only as non-root uid 10001.
 The image seeds only an empty, owned artifact directory, never model contents.
 
-With local Phase-1 training inputs present, run in PowerShell:
+For a new operator only, with approved prepared training inputs present, run in PowerShell:
 
 ```powershell
 $env:INTENTOPS_API_PORT = '18000'
@@ -239,7 +321,7 @@ set into **800 calibration / 600 threshold-selection / 601 internal-audit rows**
 Temperature scaling preserves the top category. Scores and recommendations are
 benchmark-specific, not correctness guarantees or out-of-domain detection.
 
-Native, activated matching environment (run these two steps once, in order):
+First-time policy setup only, in an activated matching native environment (once, in order):
 
 ```powershell
 python -m ml.calibrate develop --trust-local-artifacts
@@ -250,8 +332,8 @@ python -m uvicorn app.api:app --host 127.0.0.1 --port 18000 --no-access-log
 ```
 
 Start Streamlit in another terminal using the native commands above. Existing
-frozen experiments refuse redevelopment and repeat audit. On this machine the
-native policy already exists: use only the environment variables and startup.
+frozen experiments refuse redevelopment and repeat audit. If a policy already
+exists, use only the environment variables and startup.
 Disable policy with `INTENTOPS_ENABLE_REVIEW_POLICY='0'` and restart; model-only
 predictions remain available and always recommend review. `/ready` means model
 ready; `/policy/info` separately reports policy state and internal audit summary.
@@ -426,15 +508,21 @@ or real-customer performance. Optional Phase-4 calibration and review recommenda
 use a separate internal validation protocol; see [calibration results](docs/calibration.md). **API/UI inference requires an explicitly trusted, verified loaded model.**
 See [model methodology, configuration and limitations](docs/model.md).
 
-## Licensing and deferred work
+## Licensing and release scope
 
-Original code is licensed under MIT; see `LICENSE` (IntentOps Contributors).
-BANKING77 retains its separate CC BY 4.0 license and attribution obligations;
-see `THIRD_PARTY_NOTICES.md`. No dataset is included.
+Original code uses the [MIT license](LICENSE) with its existing copyright notice.
+BANKING77 retains [CC BY 4.0 attribution](THIRD_PARTY_NOTICES.md); dependencies
+retain their own licenses. No datasets, models, vocabulary or policies are released.
+See [v1.0 changes](CHANGELOG.md), [contribution workflow](CONTRIBUTING.md),
+[security disclosure limitations](SECURITY.md) and [release/recovery](docs/release.md).
 
-Deferred to Phase 6: open-source v1.0 release preparation, final documentation
-and separately authorized one-time held-out evaluation. No external ticket routing is implemented. Validation results remain
-benchmark-specific; real serving does not establish production quality.
+The official held-out test has not been **scored**. Earlier Phase-1 acquisition and
+schema/quality verification inspected source files; this is distinct from final
+model evaluation. No official test bytes were read during Phase 6. A future final
+evaluation needs separate authorization and a frozen protocol. No external ticket
+routing is implemented. The validation-derived internal audit is not an untouched
+final benchmark. An already-documented PIN-related example was confidently wrong;
+calibration does not guarantee correctness for unusual or out-of-domain messages.
 
 ## Troubleshooting
 

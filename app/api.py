@@ -32,7 +32,7 @@ def create_app(service_factory=None) -> FastAPI:
 
     application = FastAPI(
         title="IntentOps",
-        version="0.1.0",
+        version="1.0.0",
         description="Local single and bounded batch predictions; optional audited review recommendations",
         lifespan=lifespan,
     )

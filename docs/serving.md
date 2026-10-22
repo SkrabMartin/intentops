@@ -182,8 +182,10 @@ metadata keep the separate CC BY 4.0 attribution in THIRD_PARTY_NOTICES.md.
 
 ## Optional Phase-4 JSON sidecar
 
-Run README's exact `ml.calibrate develop` then `ml.calibrate audit` commands in the
-existing model environment. No base retraining. The CLI reads only pinned prepared
+For a new, unaudited experiment only, run README's `ml.calibrate develop` then
+`ml.calibrate audit` commands in the matching model environment. Existing audited
+experiments must use only serving restart commands; never repeat their audit.
+No base retraining. The CLI reads only pinned prepared
 manifest.json and validation.csv; original test contents never enter. Options
 --processed-dir, --artifact-dir, --policy-dir select operator-local directories;
 policy storage must be separate from model/data input locations. Defaults are
@@ -279,3 +281,5 @@ read-only volumes, non-root serving and policy audit warning are unchanged.
 
 Phase 5 does not rerun training, calibration or policy audit. With existing verified
 bundles, use only the serving startup commands; do not rerun setup-profile tools.
+
+For source-only first installation, safe restart and rollback, see [release operations](release.md).

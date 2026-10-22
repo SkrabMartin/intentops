@@ -1,6 +1,7 @@
 """Public architecture and source links match the repository, not local artifacts."""
 
 import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +54,14 @@ def test_readme_architecture_real_paths_and_local_only_note():
 
 
 def test_public_readme_and_new_document_links_resolve():
-    for relative in ("README.md", "docs/batch.md", "docs/benchmarks.md"):
+    for relative in (
+        "README.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        *(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").glob("*.md")),
+    ):
         path = ROOT / relative
         text = path.read_text(encoding="utf-8")
         assert "C:\\Users\\" not in text and "PHASE_5_REPORT" not in text
@@ -62,3 +70,32 @@ def test_public_readme_and_new_document_links_resolve():
             if target.startswith(("http://", "https://", "#")):
                 continue
             assert (path.parent / target.split("#", 1)[0]).is_file(), target
+
+
+def test_release_version_matches_openapi():
+    from app.api import create_app
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["version"] == create_app().openapi()["info"]["version"] == "1.0.0"
+    assert project["license"] == "MIT"
+
+
+def test_release_report_excluded_from_git_and_build():
+    for name in (".gitignore", ".dockerignore"):
+        assert "PHASE_6_REPORT.md" in (ROOT / name).read_text(encoding="utf-8").splitlines()
+
+
+def test_every_named_architecture_path_exists():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("## Repository Architecture\n", 1)[1]
+    tree = re.search(r"```text\n(.*?)\n```", section, re.DOTALL)[1]
+    parents = [ROOT]
+    for line in tree.splitlines()[1:]:
+        match = re.match(r"((?:│   |    )*)(?:├── |└── )([^#]+)", line)
+        assert match, line
+        depth = len(match[1]) // 4
+        name = match[2].strip()
+        path = parents[depth] / name
+        assert path.exists(), path
+        if name.endswith("/"):
+            parents[depth + 1 :] = [path]
