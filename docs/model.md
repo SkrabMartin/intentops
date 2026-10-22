@@ -140,8 +140,9 @@ English, banking-domain, single-intent benchmark only. Out-of-domain, unfamiliar
 multilingual and multi-intent inputs are not validated. Exact-match duplicate
 checks do not establish freedom from semantic leakage. Numerical repeatability
 requires matching dependency versions; dependencies are bounded, not hash-locked.
-Probabilities have not been calibrated. No abstention threshold, review routing,
-held-out test score, production quality or financial deployment guarantee is claimed.
+Phase 4 optionally temperature-scales scores and derives a review recommendation.
+See [calibration.md](calibration.md) for the internal protocol and actual results.
+No external routing, held-out score, production quality or financial guarantee is claimed.
 
 Original project code remains MIT. [Third-party notices](../THIRD_PARTY_NOTICES.md)
 retain PolyAI/BANKING77 CC BY 4.0 attribution and Casanueva et al. (2020). Learned
@@ -151,5 +152,6 @@ attribution. The notebook remains a cleared-output data exploration artifact.
 
 Phase 3 serving uses the same strict verifier, adds configuration/inventory checks
 and pins the approved prepared-data identity without needing datasets at runtime.
-It loads once with explicit trust and returns real typed predictions. Calibration,
-threshold design and one-time held-out assessment still require explicit later protocols.
+It loads once with explicit trust and returns real typed predictions. Phase 4 adds
+a separately verified JSON sidecar; the base model remains unchanged. Official
+held-out assessment requires a separately authorized future protocol.

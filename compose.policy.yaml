@@ -1,0 +1,29 @@
+# Explicit policy opt-in; combine with compose.yaml AND compose.model.yaml.
+services:
+  api:
+    environment:
+      INTENTOPS_ENABLE_REVIEW_POLICY: "1"
+      INTENTOPS_POLICY_DIR: /opt/intentops/policies
+    volumes:
+      - policies:/opt/intentops/policies:ro
+  calibrate:
+    profiles: [setup]
+    image: intentops-api:local
+    command: ["python", "-m", "ml.calibrate", "develop", "--processed-dir", "/input/processed", "--trust-local-artifacts"]
+    volumes:
+      - models:/opt/intentops/artifacts:ro
+      - policies:/opt/intentops/policies
+      - type: bind
+        source: ./data/processed/manifest.json
+        target: /input/processed/manifest.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/processed/validation.csv
+        target: /input/processed/validation.csv
+        read_only: true
+        bind:
+          create_host_path: false
+volumes:
+  policies:

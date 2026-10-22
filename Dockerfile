@@ -5,13 +5,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 WORKDIR /opt/intentops
 COPY pyproject.toml README.md LICENSE ./
+COPY docker-constraints.txt ./
 COPY app ./app
 COPY dashboard ./dashboard
 COPY ml ./ml
-RUN pip install --no-cache-dir . \
+RUN pip install --no-cache-dir --constraint docker-constraints.txt . \
     && useradd --create-home --uid 10001 intentops \
-    && mkdir -p /opt/intentops/artifacts \
-    && chown intentops:intentops /opt/intentops/artifacts
+    && mkdir -p /opt/intentops/artifacts /opt/intentops/policies \
+    && chown intentops:intentops /opt/intentops/artifacts /opt/intentops/policies
 COPY .streamlit ./.streamlit
 COPY THIRD_PARTY_NOTICES.md ./
 USER intentops

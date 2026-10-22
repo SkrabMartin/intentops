@@ -1,0 +1,7 @@
+# Preserve the existing Phase-3 Linux model environment without refitting it.
+# Python 3.12.15 is supplied by the base image; this is not a full lockfile.
+pandas==3.0.6
+scikit-learn==1.9.1
+numpy==2.5.4
+scipy==1.18.1
+joblib==1.6.0

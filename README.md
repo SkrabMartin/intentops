@@ -1,6 +1,6 @@
 # IntentOps
 
-**Phase 3 — real local model serving, enabled only for explicitly trusted artifacts.**
+**Phase 4 — local calibration and human-review recommendations, enabled explicitly.**
 
 IntentOps is an open-source, CPU-only customer-support intent classifier using
 BANKING77 and a TF-IDF/logistic-regression pipeline. It includes verified data
@@ -59,7 +59,9 @@ This opt-in and SHA-256 checks do not authenticate an artifact producer.
 POST /predict accepts only `{"text": "fictional example"}` with a trimmed,
 nonblank string of at most 5,000 characters. It returns intent, model_version,
 three ranked intent/score pairs and score_type=uncalibrated_model_probability.
-No routing threshold, correctness guarantee or human-review decision is implied.
+With no active policy, every prediction recommends human review. Policy-enabled
+responses use temperature-scaled scores and a development threshold. Neither mode
+executes routing or establishes a correctness guarantee.
 Invalid requests return 422 without echoing submitted values. The UI enables
 Classify only when the API reports a ready model and valid input, and submits
 text only on click to its configured local API. Messages are ephemeral, not logged
@@ -106,6 +108,57 @@ For default **no-model** startup: `docker compose up -d` (base file only). This
 mounts no model and sets no trust opt-in; health is 200, readiness/prediction 503.
 See [serving operations and troubleshooting](docs/serving.md) for the exact trust,
 integrity, offline and API contracts.
+
+## Optional calibration and human-review policy
+
+The base classifier remains fixed. Phase 4 partitions the already-used validation
+set into **800 calibration / 600 threshold-selection / 601 internal-audit rows**.
+Temperature scaling preserves the top category. Scores and recommendations are
+benchmark-specific, not correctness guarantees or out-of-domain detection.
+
+Native, activated matching environment (run these two steps once, in order):
+
+```powershell
+python -m ml.calibrate develop --trust-local-artifacts
+python -m ml.calibrate audit --trust-local-artifacts
+$env:INTENTOPS_TRUST_LOCAL_ARTIFACTS = '1'
+$env:INTENTOPS_ENABLE_REVIEW_POLICY = '1'
+python -m uvicorn app.api:app --host 127.0.0.1 --port 18000 --no-access-log
+```
+
+Start Streamlit in another terminal using the native commands above. Existing
+frozen experiments refuse redevelopment and repeat audit. On this machine the
+native policy already exists: use only the environment variables and startup.
+Disable policy with `INTENTOPS_ENABLE_REVIEW_POLICY='0'` and restart; model-only
+predictions remain available and always recommend review. `/ready` means model
+ready; `/policy/info` separately reports policy state and internal audit summary.
+
+Docker, after the compatible Phase-3 model exists (do not retrain that model):
+
+```powershell
+$env:INTENTOPS_API_PORT = '18000'
+docker compose build
+docker compose -f compose.yaml -f compose.model.yaml -f compose.policy.yaml --profile setup run --rm --no-deps calibrate
+docker compose -f compose.yaml -f compose.model.yaml -f compose.policy.yaml --profile setup run --rm --no-deps calibrate python -m ml.calibrate audit --processed-dir /input/processed --trust-local-artifacts
+docker compose -f compose.yaml -f compose.model.yaml -f compose.policy.yaml up -d
+Invoke-RestMethod http://127.0.0.1:18000/policy/info
+```
+
+Setup mounts only manifest.json and validation.csv read-only; no official test or
+training text is needed. The unchanged model volume and separate policy volume
+are read-only during serving. Ordinary startup never fits/calibrates/audits.
+For restart use only the `up -d` command; stop with the same three `-f` files and
+`stop`, preserving volumes. Use just base + model files for policy-disabled mode,
+or base alone for safe no-model mode. Dashboard: http://127.0.0.1:8501;
+API docs: http://127.0.0.1:18000/docs.
+
+Observed native temperature **0.344899**, selected threshold **0.66**. Audit coverage
+was **80.37%**, accepted-item error **7.87%**, review rate **19.63%**. The one-sided
+95% Wilson upper error bound was **10.13%**, slightly above the chosen 10% demo
+budget. The frozen policy was preserved without retuning. This is an internal
+audit of previously evaluated validation data, not an untouched official test.
+See [method, formulas, limitations and aggregate results](docs/calibration.md) and
+[policy storage/operations](docs/serving.md). Generated policies and reports stay local.
 
 ## Development and tests
 
@@ -230,8 +283,8 @@ Measured on 2026-10-21 with Python 3.12.13 / scikit-learn 1.9.1, validation only
 All 77 labels have validation support; the main model predicts all 77, baseline one.
 Top-3 counts the correct label among three candidates; it is not top-1 routing
 accuracy. These BANKING77-derived validation aggregates do not establish held-out
-or real-customer performance. Probabilities have not been calibrated; no confidence
-threshold or human-routing policy is implemented. **API/UI inference requires an explicitly trusted, verified loaded model.**
+or real-customer performance. Optional Phase-4 calibration and review recommendations
+use a separate internal validation protocol; see [calibration results](docs/calibration.md). **API/UI inference requires an explicitly trusted, verified loaded model.**
 See [model methodology, configuration and limitations](docs/model.md).
 
 ## Layout
@@ -255,8 +308,8 @@ Original code is licensed under MIT; see `LICENSE` (IntentOps Contributors).
 BANKING77 retains its separate CC BY 4.0 license and attribution obligations;
 see `THIRD_PARTY_NOTICES.md`. No dataset is included.
 
-Deferred: calibration, confidence thresholds, selective prediction/human review,
-held-out test evaluation and evaluation dashboards. Validation results remain
+Deferred: bounded batch/CSV work, performance polish and separately authorized
+held-out test evaluation. No external ticket routing is implemented. Validation results remain
 benchmark-specific; real serving does not establish production quality.
 
 ## Troubleshooting
@@ -275,3 +328,9 @@ benchmark-specific; real serving does not establish production quality.
   Never force-load an incompatible bundle; regenerate in the serving environment.
 - API unavailable in the dashboard: check `/health`, its configured local URL,
   and API logs, then refresh. The dashboard remains usable without the API.
+
+
+Docker pins model-related packages in docker-constraints.txt to preserve the
+existing Phase-3 model environment (pandas 3.0.6, sklearn 1.9.1, NumPy 2.5.4,
+SciPy 1.18.1, joblib 1.6.0). This is not a complete dependency lock. Exact Python
+and package checks still apply; an incompatible base image fails closed.

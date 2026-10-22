@@ -20,7 +20,7 @@ def test_model_info() -> None:
     response = client.get("/model/info")
     assert response.status_code == 200
     assert response.json() == {
-        "phase": 3,
+        "phase": 4,
         "status": "unavailable",
         "model_ready": False,
         "model_version": None,

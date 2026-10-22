@@ -2,7 +2,8 @@
 
 Serving is CPU-only, local-first and offline after dependency/model setup. A
 verified model loads once per process at startup. No dataset, model endpoint,
-training, download, hot reload, calibration or routing policy is used in requests.
+training, download, hot reload or calibration fitting occurs in requests. Optional
+Phase-4 JSON policy activation is documented below.
 
 ## Trust and integrity
 
@@ -110,7 +111,7 @@ allows the dashboard to start even when no classifier is ready.
 | --- | --- | --- |
 | GET /health | 200, model_ready=true | 200, model_ready=false |
 | GET /ready | 200, loaded model metadata | 503, error.code=model_not_ready |
-| GET /model/info | 200, phase 3, loaded, version/type/category count | 200, unavailable, null version/type, count 0, safe reason |
+| GET /model/info | 200, phase 4, loaded, version/type/category count | 200, unavailable, null version/type, count 0, safe reason |
 | POST /predict | 200, typed real prediction | 503 model_not_ready |
 | GET /docs | OpenAPI documents the actual schemas | Available |
 
@@ -138,15 +139,18 @@ with httpx.Client(trust_env=False, follow_redirects=False) as client:
     prediction = PredictionResponse.model_validate(response.json())
     assert prediction.intent == prediction.top_predictions[0].intent
     assert len(prediction.top_predictions) == 3
-    assert prediction.score_type == "uncalibrated_model_probability"
+    assert prediction.score_type in {
+        "uncalibrated_model_probability",
+        "temperature_scaled_probability",
+    }
     print(prediction.model_dump())  # Actual output from your loaded model.
 ```
 
 Responses contain intent, model_version, three distinct intent/score entries and
 score_type. Scores are finite in [0,1], descending, with stable declared-class-order
 ties. Their sum need not equal one because only the top three are returned. These
-are **uncalibrated model probabilities**, not correctness guarantees, calibrated
-confidence, OOD detection or an automatic routing/review decision. Validation-only
+are raw without a policy or temperature-scaled with a verified policy. Neither
+is a correctness guarantee or OOD detector; recommendations execute no action. Validation-only
 performance is in [model.md](model.md); no official held-out score is claimed.
 
 ## UI, privacy and diagnostics
@@ -170,7 +174,88 @@ local bundle with the trusted evaluation CLI in the correct environment, never b
 relaxing checks. Other applications on port 8000 are preserved; use host override
 18000, and keep the Docker-internal api:8000 address unchanged.
 
-Phase 4 calibration/selective prediction needs a separate protocol and explicit
-authorization. No thresholds, business routing, held-out evaluation, new algorithm
-or production SLA is implemented here. Original code stays MIT; BANKING77/derived
+Phase 4 implements optional calibration and development-policy recommendations.
+No business routing, held-out evaluation, new base algorithm or production SLA
+is implemented here. Original code stays MIT; BANKING77/derived
 metadata keep the separate CC BY 4.0 attribution in THIRD_PARTY_NOTICES.md.
+
+
+## Optional Phase-4 JSON sidecar
+
+Run README's exact `ml.calibrate develop` then `ml.calibrate audit` commands in the
+existing model environment. No base retraining. The CLI reads only pinned prepared
+manifest.json and validation.csv; original test contents never enter. Options
+--processed-dir, --artifact-dir, --policy-dir select operator-local directories;
+policy storage must be separate from model/data input locations. Defaults are
+module-relative. No downloads occur.
+
+Ignored policies/ holds draft.json and unique draft-<uuid>/record.json containing
+the predeclared protocol, T, model/provenance/class-order/software binding, split
+IDs/supports/hashes, fitting/selection metrics, full curve and selected rule.
+Audit claims the draft once and publishes policy-<uuid>/record.json with unchanged
+frozen development and independent audit metrics. current.json selects that record
+with SHA-256. Policy version is review- plus its digest prefix. Original model runs
+and model current pointer remain unchanged.
+
+JSON is non-executable, deterministically serialized, no NaN/Infinity, duplicate
+keys or unknown schema fields. Reads are bounded to 2 MiB per file. Selected policy
+runs permit only record.json. Symlinks, traversal, unexpected files, invalid
+statistics/schema, unsupported method/version, model/data/class-order/environment
+mismatch and bad hashes fail closed. Publication stages a run, renames it, then
+atomically replaces the pointer last. Failed pointer publication preserves the
+previous policy; orphan runs are not activated. Hashes are not signatures or author
+authentication: enable only your own reviewed experiment outputs.
+
+Native activation before API startup:
+
+```powershell
+$env:INTENTOPS_TRUST_LOCAL_ARTIFACTS = '1'
+$env:INTENTOPS_ENABLE_REVIEW_POLICY = '1'
+$env:INTENTOPS_POLICY_DIR = (Resolve-Path policies).Path
+python -m uvicorn app.api:app --host 127.0.0.1 --port 18000 --no-access-log
+```
+
+Load once at startup; restart to activate a different operator-selected policy.
+Only exact '1' enables it; executable joblib trust remains separate. HTTP requests
+cannot select paths, thresholds, temperature or reload behavior.
+Model ready with disabled/missing/invalid policy keeps /ready 200, /policy/info
+reports disabled/unavailable/invalid, and raw predictions recommend needs_review
+with reason=policy_not_available. No model means readiness/prediction 503.
+/health remains process liveness.
+
+With verified policy, /predict retains intent/model_version/top_predictions and
+returns score_type=temperature_scaled_probability, policy_status=ready,
+policy_version, policy_threshold, recommendation and reason. Threshold equality
+accepts. Null review-all always needs_review. Otherwise reasons are
+below_configured_threshold or meets_configured_threshold. The schema rejects
+automatic suggestions without a ready policy. Nothing routes, sends, approves or
+rejects tickets. Top-three scores are never renormalized.
+
+/policy/info reports non-sensitive status, version, method, temperature, threshold,
+mode, demo budget, audit counts and upper error bound. Ready is an integrity state,
+not a safety certificate; see [calibration.md](calibration.md).
+
+Docker uses the three Compose files in README. The setup-profile calibrate service
+mounts models read-only, only manifest/validation inputs read-only, and writable
+project-scoped intentops_policies. Serving mounts both model and policy volumes
+read-only under UID 10001. Windows policies must not be force-loaded with a Linux
+model identity. Preserve existing models; explicitly generate the compatible
+sidecar in the serving image. Ordinary up never trains, calibrates or audits.
+Base+model alone disables policy; base alone preserves no-model operation.
+
+After setup, a real offline prediction with both volumes read-only and no inputs:
+
+```powershell
+docker run --rm --network none --env INTENTOPS_TRUST_LOCAL_ARTIFACTS=1 --env INTENTOPS_ENABLE_REVIEW_POLICY=1 --mount type=volume,source=intentops_models,target=/opt/intentops/artifacts,readonly --mount type=volume,source=intentops_policies,target=/opt/intentops/policies,readonly intentops-api:local python -c "from app.inference import ModelService; s=ModelService.from_environment(); assert s.ready and s.policy_info().status=='ready'; print(s.predict('When will my new card arrive?').model_dump())"
+```
+
+Ordinary Compose networking differs from --network none. Stop with the same
+three Compose files and stop; preserve volumes and audit claims. Policy outputs,
+plots, logs, screenshots, local verification scripts/results and reports stay
+ignored and excluded from builds. No persistent customer-text history exists.
+
+
+Docker pins model-related packages in docker-constraints.txt to preserve the
+existing Phase-3 model environment (pandas 3.0.6, sklearn 1.9.1, NumPy 2.5.4,
+SciPy 1.18.1, joblib 1.6.0). This is not a complete dependency lock. Exact Python
+and package checks still apply; an incompatible base image fails closed.

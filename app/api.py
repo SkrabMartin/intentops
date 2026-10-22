@@ -12,6 +12,7 @@ from app.schemas import (
     ErrorResponse,
     HealthResponse,
     ModelInfoResponse,
+    PolicyInfoResponse,
     PredictionRequest,
     PredictionResponse,
 )
@@ -27,7 +28,7 @@ def create_app(service_factory=None) -> FastAPI:
     application = FastAPI(
         title="IntentOps",
         version="0.1.0",
-        description="Phase 3: trusted local model serving",
+        description="Phase 4: local calibration and human-review recommendations",
         lifespan=lifespan,
     )
     application.state.model_service = ModelService()
@@ -78,6 +79,10 @@ def create_app(service_factory=None) -> FastAPI:
     @application.get("/model/info", response_model=ModelInfoResponse)
     def model_info(request: Request):
         return request.app.state.model_service.info()
+
+    @application.get("/policy/info", response_model=PolicyInfoResponse)
+    def policy_info(request: Request):
+        return request.app.state.model_service.policy_info()
 
     @application.post(
         "/predict",

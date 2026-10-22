@@ -38,3 +38,9 @@ into the application. Serving does not change the separate data/metadata license
 Upstream citation: Iñigo Casanueva, Tadas Temcinas, Daniela Gerz, Matthew Henderson,
 and Ivan Vulić (2020), [Efficient Intent Detection with Dual Sentence Encoders](https://arxiv.org/abs/2003.04807),
 Proceedings of the 2nd Workshop on NLP for ConvAI, ACL 2020.
+
+Phase 4 derives local validation subdivisions, calibration metadata and policy
+artifacts from BANKING77. These remain local and retain separate CC BY 4.0
+provenance obligations; the original calibration/serving code remains MIT.
+Published aggregate internal-development results are attributed to BANKING77;
+no source rows, model vocabulary or generated policy files are distributed.

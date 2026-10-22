@@ -8,7 +8,15 @@ from pathlib import Path
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from app.schemas import ModelInfoResponse, PredictionRequest, PredictionResponse, PredictionScore
+from app.schemas import (
+    ModelInfoResponse,
+    PolicyInfoResponse,
+    PredictionRequest,
+    PredictionResponse,
+    PredictionScore,
+)
+from ml import calibration as cal
+from ml import review_policy as policies
 from ml.model_support import DEFAULT_ARTIFACTS, load_artifacts, serving_contract
 
 logger = logging.getLogger(__name__)
@@ -27,6 +35,9 @@ class ModelService:
         self.model = None
         self.metadata = None
         self.reason = "disabled"
+        self.policy = None
+        self.policy_version = None
+        self.policy_status = "disabled"
         self._lock = threading.Lock()
 
     @classmethod
@@ -54,8 +65,46 @@ class ModelService:
     @classmethod
     def from_environment(cls):
         trusted = os.environ.get("INTENTOPS_TRUST_LOCAL_ARTIFACTS") == "1"
-        return cls.load(
+        service = cls.load(
             Path(os.environ.get("INTENTOPS_ARTIFACT_DIR", str(DEFAULT_ARTIFACTS))), trusted=trusted
+        )
+        service.load_policy(
+            Path(os.environ.get("INTENTOPS_POLICY_DIR", str(policies.DEFAULT_POLICIES))),
+            enabled=os.environ.get("INTENTOPS_ENABLE_REVIEW_POLICY") == "1",
+        )
+        return service
+
+    def load_policy(self, root: Path, *, enabled: bool = False):
+        """Called only during explicit initialization, never by a request."""
+        self.policy = None
+        self.policy_version = None
+        self.policy_status = "disabled" if not enabled else "unavailable"
+        if not enabled or not self.ready:
+            return
+        try:
+            self.policy, self.policy_version = policies.load_policy(root, self.metadata)
+            self.policy_status = "ready"
+        except FileNotFoundError:
+            self.policy_status = "unavailable"
+        except Exception:  # noqa: BLE001 -- sanitize all operator-selected sidecar errors.
+            self.policy_status = "invalid"
+            logger.warning("Review policy invalid; raw predictions require human review.")
+
+    def policy_info(self):
+        if self.policy is None or not self.ready:
+            return PolicyInfoResponse(status=self.policy_status if self.ready else "unavailable")
+        threshold = self.policy.frozen.selected.threshold
+        return PolicyInfoResponse(
+            status="ready",
+            policy_version=self.policy_version,
+            method="temperature_scaling_v1",
+            temperature=self.policy.frozen.temperature,
+            threshold=threshold,
+            mode="review_all" if threshold is None else "threshold",
+            demo_error_budget=0.1,
+            audit_rows=self.policy.audit_risk.rows,
+            audit_accepted=self.policy.audit_risk.accepted,
+            audit_upper_error_bound=self.policy.audit_risk.wilson_upper,
         )
 
     @property
@@ -82,6 +131,14 @@ class ModelService:
             # Serial local inference bounds concurrent threadpool changes and CPU use.
             with self._lock, threadpool_limits(limits=1):
                 values = np.asarray(self.model.predict_proba([text]), dtype=float)
+                if self.policy is not None:
+                    raw = cal.probabilities(values)
+                    decision = self.model.decision_function([text])
+                    if not np.allclose(cal.scaled(decision, 1.0), raw, atol=1e-12, rtol=1e-12):
+                        raise ValueError("Inconsistent decision scores")
+                    values = cal.scaled(decision, self.policy.frozen.temperature)
+                    if not np.array_equal(values.argmax(axis=1), raw.argmax(axis=1)):
+                        raise ValueError("Changed ranking")
             labels = list(self.model.classes_)
             if (
                 values.shape != (1, len(labels))
@@ -95,10 +152,33 @@ class ModelService:
             scores = [
                 PredictionScore(intent=str(labels[i]), score=float(values[0, i])) for i in order
             ]
+            policy_info = self.policy_info()
+            automatic = (
+                self.policy is not None
+                and policy_info.threshold is not None
+                and scores[0].score >= policy_info.threshold
+            )
+            reason = (
+                "policy_not_available"
+                if self.policy is None
+                else "meets_configured_threshold"
+                if automatic
+                else "review_all_policy"
+                if policy_info.threshold is None
+                else "below_configured_threshold"
+            )
             return PredictionResponse(
                 intent=scores[0].intent,
                 model_version=self.metadata["model_version"],
                 top_predictions=scores,
+                score_type="temperature_scaled_probability"
+                if self.policy
+                else "uncalibrated_model_probability",
+                recommendation="suggest_automatic" if automatic else "needs_review",
+                policy_status=policy_info.status,
+                policy_version=policy_info.policy_version,
+                policy_threshold=policy_info.threshold,
+                reason=reason,
             )
         except Exception:  # noqa: BLE001 -- model errors must never expose submitted text.
             # Fail closed after a severe inference failure; restart required.

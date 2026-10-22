@@ -9,12 +9,32 @@ from streamlit.testing.v1 import AppTest
 SCRIPT = Path(__file__).resolve().parents[1] / "dashboard/streamlit_app.py"
 
 
-def setup_http(monkeypatch, *, ready=True, failure=None):
+def setup_http(monkeypatch, *, ready=True, failure=None, policy_mode="disabled", automatic=True):
     def get(client, path):
         if failure == "down":
             raise httpx.ConnectError("fictional internal path must not display")
         if failure == "status_timeout":
             raise httpx.ReadTimeout("fictional timeout")
+        if path == "/policy/info":
+            policy_body = {"status": "disabled"}
+            if policy_mode == "ready":
+                policy_body = {
+                    "status": "ready",
+                    "policy_version": "review-fixture",
+                    "method": "temperature_scaling_v1",
+                    "temperature": 0.5,
+                    "threshold": 0.6,
+                    "mode": "threshold",
+                    "demo_error_budget": 0.1,
+                    "audit_rows": 100,
+                    "audit_accepted": 80,
+                    "audit_upper_error_bound": 0.11,
+                }
+            elif policy_mode == "malformed":
+                policy_body = {"status": "ready", "temperature": "private detail"}
+            return httpx.Response(
+                200, json=policy_body, request=httpx.Request("GET", "http://api" + path)
+            )
         body = (
             {"status": "ok", "model_ready": ready}
             if path == "/health"
@@ -52,6 +72,19 @@ def setup_http(monkeypatch, *, ready=True, failure=None):
                 {"intent": "gamma_case", "score": 0.1},
             ],
         }
+        if policy_mode == "ready":
+            body.update(
+                {
+                    "score_type": "temperature_scaled_probability",
+                    "policy_status": "ready",
+                    "policy_version": "review-fixture",
+                    "policy_threshold": 0.6 if automatic else 0.9,
+                    "recommendation": "suggest_automatic" if automatic else "needs_review",
+                    "reason": "meets_configured_threshold"
+                    if automatic
+                    else "below_configured_threshold",
+                }
+            )
         if failure == "malformed":
             body = {"intent": "fake"}
         return httpx.Response(200, json=body, request=httpx.Request("POST", "http://api/predict"))
@@ -144,3 +177,29 @@ def test_blank_input_disabled_even_with_ready_model(monkeypatch):
     view = AppTest.from_file(SCRIPT).run(timeout=20)
     view.text_area[0].set_value("   ").run()
     assert view.button[0].disabled
+
+
+@pytest.mark.parametrize("automatic", [True, False])
+def test_policy_ready_recommendation_and_calibrated_scores(monkeypatch, automatic):
+    calls = setup_http(monkeypatch, policy_mode="ready", automatic=automatic)
+    view = AppTest.from_file(SCRIPT).run(timeout=20)
+    view.text_area[0].set_value("fictional message").run()
+    view.button[0].click().run()
+    assert not view.exception and calls == [{"text": "fictional message"}]
+    assert "Temperature-scaled probability" in view.dataframe[0].value.columns
+    messages = [x.value for x in view.info] + [x.value for x in view.warning]
+    assert any(
+        ("Suggested automatic" if automatic else "below calibrated threshold") in x
+        for x in messages
+    )
+
+
+def test_malformed_policy_status_preserves_raw_model_prediction(monkeypatch):
+    setup_http(monkeypatch, policy_mode="malformed")
+    view = AppTest.from_file(SCRIPT).run(timeout=20)
+    assert any("Policy status unavailable or invalid" in x.value for x in view.warning)
+    view.text_area[0].set_value("fictional message").run()
+    view.button[0].click().run()
+    assert not view.exception and view.dataframe
+    assert any("no validated review policy" in x.value for x in view.warning)
+    assert all("private detail" not in x.value for x in view.warning)

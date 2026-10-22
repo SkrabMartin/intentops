@@ -7,7 +7,13 @@ import httpx
 import streamlit as st
 from pydantic import ValidationError
 
-from app.schemas import HealthResponse, ModelInfoResponse, PredictionRequest, PredictionResponse
+from app.schemas import (
+    HealthResponse,
+    ModelInfoResponse,
+    PolicyInfoResponse,
+    PredictionRequest,
+    PredictionResponse,
+)
 
 st.set_page_config(page_title="IntentOps", page_icon="💬")
 st.title("IntentOps")
@@ -52,6 +58,39 @@ except (ValueError, ValidationError):
         "Invalid local API configuration or status response. Use a loopback HTTP URL or http://api:8000 in Compose."
     )
 
+if ready:
+    try:
+        with httpx.Client(
+            base_url=base_url, timeout=5.0, trust_env=False, follow_redirects=False
+        ) as client:
+            response = client.get("/policy/info")
+            response.raise_for_status()
+            policy = PolicyInfoResponse.model_validate(response.json())
+        st.caption(f"Calibration / review policy: {policy.status}")
+        if policy.status == "ready":
+            st.caption(f"Policy: {policy.policy_version} · {policy.mode}")
+            st.caption(
+                f"Internal audit: {policy.audit_accepted}/{policy.audit_rows} accepted; "
+                f"one-sided upper error bound: {policy.audit_upper_error_bound:.2%}"
+                if policy.audit_upper_error_bound is not None
+                else "Internal audit: zero accepted; selective error is undefined."
+            )
+            if (
+                policy.audit_upper_error_bound is not None
+                and policy.audit_upper_error_bound > policy.demo_error_budget
+            ):
+                st.warning(
+                    "Internal audit upper error bound exceeds the chosen demonstration budget. This policy does not establish a safety guarantee."
+                )
+        else:
+            st.info(
+                "Human review suggested (no validated review policy active). Raw model scores remain available."
+            )
+    except (httpx.HTTPError, ValueError, ValidationError):
+        st.warning(
+            "Policy status unavailable or invalid. Predictions must carry a valid recommendation; no action is executed."
+        )
+
 text = st.text_area("Customer message", max_chars=5000, placeholder="Use a fictional example.")
 try:
     payload = PredictionRequest(text=text)
@@ -73,11 +112,31 @@ if st.button("Classify", disabled=not ready or not valid):
         st.subheader("Predicted intent")
         st.success(prediction.intent)
         st.caption(f"Model: {prediction.model_version}")
+        if prediction.policy_status != "ready":
+            st.warning("Human review suggested (no validated review policy active)")
+        elif prediction.recommendation == "suggest_automatic":
+            st.info(
+                "Recommendation: Suggested automatic classification — meets configured development threshold"
+            )
+        else:
+            st.warning(
+                "Recommendation: Human review — "
+                + (
+                    "review-all policy"
+                    if prediction.reason == "review_all_policy"
+                    else "below calibrated threshold"
+                )
+            )
+        st.caption(
+            f"Policy status: {prediction.policy_status} · Policy: {prediction.policy_version or 'none'}"
+        )
+        score_label = (
+            "Temperature-scaled probability"
+            if prediction.score_type == "temperature_scaled_probability"
+            else "Uncalibrated probability"
+        )
         st.dataframe(
-            [
-                {"Intent": p.intent, "Uncalibrated probability": p.score}
-                for p in prediction.top_predictions
-            ],
+            [{"Intent": p.intent, score_label: p.score} for p in prediction.top_predictions],
             hide_index=True,
         )
     except httpx.TimeoutException:
@@ -96,5 +155,5 @@ if st.button("Classify", disabled=not ready or not valid):
     except (ValueError, ValidationError):
         st.error("The local API returned an invalid prediction response. No result is displayed.")
 st.caption(
-    "Scores are uncalibrated model probabilities, not correctness guarantees. No automatic routing or review decision is made."
+    "Scores and development-policy recommendations are not correctness guarantees or out-of-domain detection. No routing or external action is executed. A human remains responsible."
 )
